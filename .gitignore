@@ -1,0 +1,19 @@
+# Files and directories created by pub.
+.dart_tool/
+.pub-cache/
+.packages
+.idea/
+node_modules/
+.tmp/
+.env
+
+# Conventional directory for build output.
+build/
+web/dist/
+
+bili_novel.log
+*.log
+*.epub
+data/
+caddy_config/
+caddy_data/

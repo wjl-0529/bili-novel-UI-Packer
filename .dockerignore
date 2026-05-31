@@ -1,0 +1,14 @@
+.dart_tool/
+.pub-cache/
+.git/
+.github/
+.gitee/
+.idea/
+build/
+caddy_config/
+caddy_data/
+data/
+node_modules/
+web/dist/
+*.log
+pubspec.lock
