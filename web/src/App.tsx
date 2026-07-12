@@ -2344,7 +2344,9 @@ function JobRow({
   onRetry: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const terminal = ["succeeded", "failed", "canceled", "canceling"].includes(job.status);
+  const terminal = ["succeeded", "failed", "canceled", "canceling", "paused"].includes(
+    job.status,
+  );
   const canCancel = !terminal;
   const progress = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
 
@@ -2389,13 +2391,19 @@ function JobRow({
               )}
             </button>
           ) : null}
-          {job.status === "failed" || job.status === "canceled" ? (
+          {job.status === "failed" || job.status === "canceled" || job.status === "paused" ? (
             <button
-              title="重试"
+              title={job.status === "paused" ? "重新开始任务" : "重试"}
               disabled={busy}
               onClick={(event) => runRowAction(event, onRetry)}
             >
-              {busy ? <Loader2 className="spin-icon" size={16} /> : <RotateCcw size={16} />}
+              {busy ? (
+                <Loader2 className="spin-icon" size={16} />
+              ) : job.status === "paused" ? (
+                <Play size={16} />
+              ) : (
+                <RotateCcw size={16} />
+              )}
             </button>
           ) : null}
           {job.outputFiles.length === 1 ? (
@@ -2450,7 +2458,9 @@ function JobCard({
   onRetry: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const terminal = ["succeeded", "failed", "canceled", "canceling"].includes(job.status);
+  const terminal = ["succeeded", "failed", "canceled", "canceling", "paused"].includes(
+    job.status,
+  );
   const progress = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
 
   return (
@@ -2485,13 +2495,19 @@ function JobCard({
             {busy ? <Loader2 className="spin-icon" size={16} /> : <StopCircle size={16} />}
           </button>
         ) : null}
-        {job.status === "failed" || job.status === "canceled" ? (
+        {job.status === "failed" || job.status === "canceled" || job.status === "paused" ? (
           <button
-            title="重试"
+            title={job.status === "paused" ? "重新开始任务" : "重试"}
             disabled={busy}
             onClick={(event) => runRowAction(event, onRetry)}
           >
-            {busy ? <Loader2 className="spin-icon" size={16} /> : <RotateCcw size={16} />}
+            {busy ? (
+              <Loader2 className="spin-icon" size={16} />
+            ) : job.status === "paused" ? (
+              <Play size={16} />
+            ) : (
+              <RotateCcw size={16} />
+            )}
           </button>
         ) : null}
         {job.outputFiles.length === 1 ? (
@@ -2753,6 +2769,7 @@ const realtimeText: Record<RealtimeState, string> = {
 const statusText: Record<JobStatus, string> = {
   queued: "排队",
   running: "运行",
+  paused: "已暂停",
   canceling: "已取消",
   succeeded: "完成",
   failed: "失败",
@@ -2771,6 +2788,7 @@ const uploadStatusText: Record<UploadDisplayStatus, string> = {
 const statusIcons: Record<JobStatus, LucideIcon> = {
   queued: Clock3,
   running: Loader2,
+  paused: Clock3,
   canceling: StopCircle,
   succeeded: CheckCircle2,
   failed: XCircle,

@@ -1,6 +1,7 @@
 export type JobStatus =
   | "queued"
   | "running"
+  | "paused"
   | "canceling"
   | "succeeded"
   | "failed"

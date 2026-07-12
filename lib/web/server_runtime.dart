@@ -126,7 +126,7 @@ class WebServerRuntime {
       service: autoUpdateService,
     );
 
-    await queue.resumeQueuedJobs();
+    await queue.resumeQueuedJobs(autoResume: embeddedPlatform == null);
     cleanupScheduler.start();
     autoUpdateScheduler.start();
     try {

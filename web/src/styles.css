@@ -1059,6 +1059,11 @@ td span {
   background: #eef2f7;
 }
 
+.status-badge.paused {
+  color: #7b4d14;
+  background: var(--amber-soft);
+}
+
 .status-badge.running {
   color: var(--teal-dark);
   background: var(--teal-soft);

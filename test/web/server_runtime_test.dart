@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:bili_novel_packer/web/bark_client.dart';
 import 'package:bili_novel_packer/web/job.dart';
+import 'package:bili_novel_packer/web/job_store.dart';
 import 'package:bili_novel_packer/web/server_runtime.dart';
 import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
@@ -13,15 +14,32 @@ void main() {
     addTearDown(() => root.delete(recursive: true));
     final webRoot = Directory('${root.path}/web')..createSync(recursive: true);
     File('${webRoot.path}/index.html').writeAsStringSync('<h1>ready</h1>');
+    final dataDir = '${root.path}/data';
+    final seedStore = JobStore(dataDir);
+    await seedStore.load();
+    final runningJob = _job('was-running')
+      ..status = 'running'
+      ..progress = 0.42;
+    final queuedJob = _job('was-queued')..status = 'queued';
+    final completedJob = _job('was-completed')..status = 'succeeded';
+    await seedStore.addAll([runningJob, queuedJob, completedJob]);
 
     final runtime = await WebServerRuntime.start(
-      dataDir: '${root.path}/data',
+      dataDir: dataDir,
       webRoot: webRoot.path,
       embeddedPlatform: 'ios',
     );
     addTearDown(runtime.close);
     expect(runtime.server.address.isLoopback, isTrue);
     expect(runtime.server.port, greaterThan(0));
+    expect(runtime.store.find('was-running')?.status, 'paused');
+    expect(runtime.store.find('was-running')?.progress, runningJob.progress);
+    expect(runtime.store.find('was-queued')?.status, 'paused');
+    expect(runtime.store.find('was-completed')?.status, 'succeeded');
+    expect(
+      runtime.store.find('was-running')?.logs.last,
+      contains('未自动重新下载'),
+    );
 
     final client = http.Client();
     addTearDown(client.close);

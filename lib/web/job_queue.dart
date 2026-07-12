@@ -46,8 +46,14 @@ class JobQueue {
     required this.maxBatchSize,
   });
 
-  Future<void> resumeQueuedJobs() async {
+  Future<void> resumeQueuedJobs({bool autoResume = true}) async {
     for (final job in store.jobs) {
+      if (!autoResume && (job.status == "running" || job.status == "queued")) {
+        job.status = "paused";
+        job.message = "应用已重启，任务已暂停，请手动重新开始";
+        job.addLog("应用已重启，任务已暂停，未自动重新下载");
+        continue;
+      }
       if (job.status == "running") {
         job.status = "queued";
         job.progress = 0;
@@ -64,7 +70,9 @@ class JobQueue {
     }
     await store.save();
     _publishJobs();
-    _pump();
+    if (autoResume) {
+      _pump();
+    }
   }
 
   Future<List<DownloadJob>> submit(JobRequest request) async {
