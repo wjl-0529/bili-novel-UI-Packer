@@ -1,6 +1,9 @@
 import 'package:bili_novel_packer/epub_packer/epub_node.dart';
 import 'package:bili_novel_packer/media_type.dart' as media_type;
+import 'package:intl/intl.dart';
 import 'package:xml/xml.dart';
+
+DateFormat _format = DateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
 
 /// content.opf
 class EpubOpenPackageFormat implements EpubNode {
@@ -68,7 +71,7 @@ class EpubOpenPackageFormat implements EpubNode {
         "xmlns": "http://www.idpf.org/2007/opf",
         "xmlns:dc": "http://purl.org/dc/elements/1.1/",
         "unique-identifier": "bookId",
-        "version": "2.0"
+        "version": "3.0",
       },
       nest: () {
         metaData.build();
@@ -98,49 +101,65 @@ class MetaData extends EpubChildNode {
 
   @override
   void build() {
-    builder.element("metadata", nest: () {
-      builder.element(
-        "dc:identifier",
-        attributes: {"id": "bookId"},
-        nest: bookUuid,
-      );
-      builder.element("dc:language", nest: language);
-      builder.element("dc:title", nest: docTitle);
-      builder.element("dc:creator", nest: creator);
-      if (source != null) {
-        builder.element("dc:source", nest: source);
-      }
-      if (description != null) {
-        builder.element("dc:description", nest: description);
-      }
-      if (publisher != null) {
-        builder.element("dc:publisher", nest: publisher);
-      }
-      if (subjects.isNotEmpty) {
-        for (var subject in subjects) {
-          builder.element("dc:subject", nest: subject);
+    builder.element(
+      "metadata",
+      nest: () {
+        builder.element(
+          "dc:identifier",
+          attributes: {"id": "bookId"},
+          nest: bookUuid,
+        );
+        builder.element("dc:language", nest: language);
+        builder.element("dc:title", nest: docTitle);
+        builder.element("dc:creator", nest: creator);
+        if (source != null) {
+          builder.element("dc:source", nest: source);
         }
-      }
-      builder.element(
-        "meta",
-        attributes: {
-          "name": "cover",
-          "content": "cover-image",
-        },
-      );
-      if (calibreSeries != null) {
-        builder.element("meta", attributes: {
-          "name": "calibre:series",
-          "content": calibreSeries!,
-        });
-      }
-      if (calibreSeriesIndex != null) {
-        builder.element("meta", attributes: {
-          "name": "calibre:series_index",
-          "content": calibreSeriesIndex!.toString(),
-        });
-      }
-    });
+        if (description != null) {
+          builder.element("dc:description", nest: description);
+        }
+        if (publisher != null) {
+          builder.element("dc:publisher", nest: publisher);
+        }
+        if (subjects.isNotEmpty) {
+          for (var subject in subjects) {
+            builder.element("dc:subject", nest: subject);
+          }
+        }
+        builder.element(
+          "meta",
+          attributes: {
+            "property": "dcterms:modified",
+          },
+          nest: _format.format(DateTime.now().toUtc()),
+        );
+        // builder.element(
+        //   "meta",
+        //   attributes: {
+        //     "name": "cover",
+        //     "content": "cover-image",
+        //   },
+        // );
+        if (calibreSeries != null) {
+          builder.element(
+            "meta",
+            attributes: {
+              "name": "calibre:series",
+              "content": calibreSeries!,
+            },
+          );
+        }
+        if (calibreSeriesIndex != null) {
+          builder.element(
+            "meta",
+            attributes: {
+              "name": "calibre:series_index",
+              "content": calibreSeriesIndex!.toString(),
+            },
+          );
+        }
+      },
+    );
   }
 }
 
@@ -150,7 +169,15 @@ class Manifest extends EpubChildNode {
   String? cover;
 
   final List<ManifestItem> _manifestList = [
-    ManifestItem("ncx", "toc.ncx", media_type.ncx)
+    ManifestItem("ncx", "toc.ncx", media_type.ncx),
+    ManifestItem(
+      "nav",
+      "toc.xhtml",
+      media_type.xhtml,
+      attributes: {
+        "properties": "nav",
+      },
+    ),
   ];
 
   void addManifestItem(ManifestItem item) {
@@ -162,27 +189,27 @@ class Manifest extends EpubChildNode {
     builder.element(
       "manifest",
       nest: () {
-        if (cover != null) {
+        // if (cover != null) {
+        //   builder.element(
+        //     "item",
+        //     attributes: {
+        //       "id": "cover-image",
+        //       "href": cover!,
+        //       "media-type": media_type.jpeg,
+        //     },
+        //   );
+        // }
+        for (ManifestItem item in _manifestList) {
           builder.element(
             "item",
             attributes: {
-              "id": "cover-image",
-              "href": cover!,
-              "media-type": media_type.jpeg
+              "id": item.id,
+              "href": item.href,
+              "media-type": item.mediaType,
+              if (item.href == cover) "properties": "cover-image",
+              ...?item.attributes,
             },
           );
-        }
-        for (ManifestItem item in _manifestList) {
-          if (item.href != cover) {
-            builder.element(
-              "item",
-              attributes: {
-                "id": item.id,
-                "href": item.href,
-                "media-type": item.mediaType
-              },
-            );
-          }
         }
       },
     );
@@ -193,9 +220,10 @@ class ManifestItem {
   String id;
   String href;
   String mediaType;
+  Map<String, String>? attributes;
 
-  ManifestItem(this.id, String href, this.mediaType)
-      : href = href.replaceAll("\\", "/");
+  ManifestItem(this.id, String href, this.mediaType, {this.attributes})
+    : href = href.replaceAll("\\", "/");
 }
 
 class Spine extends EpubChildNode {

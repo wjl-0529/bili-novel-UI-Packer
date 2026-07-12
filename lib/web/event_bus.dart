@@ -19,9 +19,14 @@ class EventBus {
 
   void publish(String type, Object? data) {
     final event = formatEvent(type, data);
-    for (final controller
-        in List<StreamController<String>>.from(_controllers)) {
-      if (!controller.isClosed) {
+    // Iterate in reverse to allow safe removal during iteration
+    for (var i = _controllers.length - 1; i >= 0; i--) {
+      // The subscription cancellation callback owns this controller's cleanup.
+      // ignore: close_sinks
+      final controller = _controllers[i];
+      if (controller.isClosed) {
+        _controllers.removeAt(i);
+      } else {
         controller.add(event);
       }
     }
@@ -33,5 +38,11 @@ class EventBus {
       "data": data,
       "ts": DateTime.now().toIso8601String(),
     });
+  }
+
+  Future<void> close() async {
+    final controllers = List<StreamController<String>>.from(_controllers);
+    _controllers.clear();
+    await Future.wait(controllers.map((controller) => controller.close()));
   }
 }

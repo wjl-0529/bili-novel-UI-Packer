@@ -33,6 +33,10 @@ class WebApp {
   final CleanupConfigStore cleanupConfigStore;
   final AutoUpdateConfigStore autoUpdateConfigStore;
   final AutoUpdateService autoUpdateService;
+  final String? embeddedPlatform;
+  final String? nativeBootstrapToken;
+  final DateTime? nativeBootstrapExpiresAt;
+  bool _nativeBootstrapConsumed = false;
 
   WebApp({
     required this.store,
@@ -45,10 +49,15 @@ class WebApp {
     required this.cleanupConfigStore,
     required this.autoUpdateConfigStore,
     required this.autoUpdateService,
+    this.embeddedPlatform,
+    this.nativeBootstrapToken,
+    this.nativeBootstrapExpiresAt,
   });
 
   Handler get handler {
     final router = Router()
+      ..get("/api/runtime", _runtime)
+      ..post("/api/native/bootstrap", _nativeBootstrap)
       ..post("/api/login", _login)
       ..post("/api/logout", _logout)
       ..get("/api/me", _me)
@@ -76,14 +85,43 @@ class WebApp {
     final staticHandler = staticDir.existsSync()
         ? createStaticHandler(webRoot, defaultDocument: "index.html")
         : (Request request) => Response.notFound(
-              "Web 控制台还没有构建，请先运行 npm install && npm run build。",
-            );
+            "Web 控制台还没有构建，请先运行 npm install && npm run build。",
+          );
     router.mount("/", staticHandler);
 
     return const Pipeline()
         .addMiddleware(logRequests())
         .addMiddleware(_authMiddleware)
         .addHandler(router.call);
+  }
+
+  Response _runtime(Request request) {
+    return _json({
+      "embedded": embeddedPlatform != null,
+      "platform": embeddedPlatform,
+    });
+  }
+
+  Response _nativeBootstrap(Request request) {
+    if (embeddedPlatform == null || nativeBootstrapToken == null) {
+      return _json({"message": "Native bootstrap is unavailable"}, status: 404);
+    }
+    final authorization = request.headers["authorization"] ?? "";
+    final expected = "Bearer $nativeBootstrapToken";
+    final expired =
+        nativeBootstrapExpiresAt == null ||
+        DateTime.now().isAfter(nativeBootstrapExpiresAt!);
+    if (_nativeBootstrapConsumed || expired || authorization != expected) {
+      return _json({
+        "message": "Native bootstrap token is invalid",
+      }, status: 401);
+    }
+    _nativeBootstrapConsumed = true;
+    final sessionToken = sessions.create();
+    return Response.found(
+      "/",
+      headers: {"set-cookie": sessions.loginCookie(sessionToken)},
+    );
   }
 
   Future<Response> _login(Request request) async {
@@ -254,8 +292,9 @@ class WebApp {
   ) async {
     final results = List<_PreviewResult?>.filled(ids.length, null);
     var nextIndex = 0;
-    final workerCount =
-        ids.length < _previewConcurrency ? ids.length : _previewConcurrency;
+    final workerCount = ids.length < _previewConcurrency
+        ? ids.length
+        : _previewConcurrency;
 
     Future<void> worker() async {
       while (true) {
@@ -264,8 +303,10 @@ class WebApp {
         if (index >= ids.length) {
           return;
         }
-        results[index] =
-            await _loadNovelPreviewWithRetry(ids[index], urls[index]);
+        results[index] = await _loadNovelPreviewWithRetry(
+          ids[index],
+          urls[index],
+        );
       }
     }
 
@@ -293,7 +334,9 @@ class WebApp {
   }
 
   Future<Map<String, dynamic>> _loadNovelPreview(
-      int sourceId, String url) async {
+    int sourceId,
+    String url,
+  ) async {
     final packer = NovelPacker.fromUrl(url);
     final novel = await packer.getNovel();
 
@@ -409,6 +452,8 @@ class WebApp {
   }
 
   Stream<List<int>> _createEventStream() {
+    // The Shelf response subscriber owns this stream and triggers onCancel.
+    // ignore: close_sinks
     late StreamController<List<int>> controller;
     StreamSubscription<String>? subscription;
     Timer? heartbeat;
@@ -422,23 +467,27 @@ class WebApp {
     controller = StreamController<List<int>>(
       onListen: () {
         subscription = events.subscribe().listen(
-              addEvent,
-              onError: controller.addError,
-            );
+          addEvent,
+          onError: controller.addError,
+        );
         if (!controller.isClosed) {
           controller.add(utf8.encode("retry: 1000\n\n"));
         }
-        addEvent(events.formatEvent(
-          "jobs",
-          store.jobsToJson(),
-        ));
+        addEvent(
+          events.formatEvent(
+            "jobs",
+            store.jobsToJson(),
+          ),
+        );
         heartbeat = Timer.periodic(
           const Duration(seconds: 5),
           (_) {
-            addEvent(events.formatEvent(
-              "heartbeat",
-              {"message": "keepalive"},
-            ));
+            addEvent(
+              events.formatEvent(
+                "heartbeat",
+                {"message": "keepalive"},
+              ),
+            );
           },
         );
       },
@@ -471,7 +520,10 @@ class WebApp {
     if (!path.startsWith("api/")) {
       return false;
     }
-    return path != "api/login" && path != "api/me";
+    return path != "api/login" &&
+        path != "api/me" &&
+        path != "api/runtime" &&
+        path != "api/native/bootstrap";
   }
 
   List<int> _sseData(String event) => utf8.encode("data: $event\n\n");
@@ -558,14 +610,14 @@ class _PreviewResult {
   final String? message;
 
   const _PreviewResult.success(this.sourceId, this.url, this.preview)
-      : message = null;
+    : message = null;
 
   const _PreviewResult.failure(this.sourceId, this.url, this.message)
-      : preview = null;
+    : preview = null;
 
   Map<String, dynamic> failureToJson() => {
-        "sourceId": sourceId,
-        "url": url,
-        "message": message ?? "搜索失败",
-      };
+    "sourceId": sourceId,
+    "url": url,
+    "message": message ?? "搜索失败",
+  };
 }

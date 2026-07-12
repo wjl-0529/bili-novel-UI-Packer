@@ -4,44 +4,107 @@ import 'package:bili_novel_packer/scheduler/scheduler.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test("SchedulerTest", () async {
-    Scheduler scheduler = Scheduler(0, Duration.zero);
-    scheduler.run((c) {
-      print("AAA");
-    });
-    scheduler.run((c) async {
-      print("BBB pause");
-      c.pause();
-      Future.delayed(Duration(seconds: 5)).then((_) {
-        c.resume();
-        print("BBB resume");
-      });
-    });
+  test('each submission has an independent result', () async {
+    final scheduler = Scheduler.unlimited();
+    var calls = 0;
 
-    scheduler.run((_) async {
-      print("CCC");
-      await Future.delayed(Duration(seconds: 3)).then((_) {
-        print("CCC OK");
-      });
-    });
-    await Future.delayed(Duration(seconds: 15));
+    Future<int> task(SchedulerController _) async => ++calls;
 
-    scheduler.run((_) {
-      print("DDD");
-    });
-    await Future.delayed(Duration(seconds: 1));
+    final results = await Future.wait([
+      scheduler.run(task),
+      scheduler.run(task),
+    ]);
+
+    expect(results, [1, 2]);
+    await expectLater(
+      scheduler.run<int>((_) => throw StateError('boom')),
+      throwsStateError,
+    );
+    await scheduler.wait();
   });
 
-  test("RateScheduler", () async {
-    Scheduler scheduler = Scheduler(0, Duration(seconds: 2));
-    for (int i = 1; i <= 100; i++) {
-      scheduler.run((_) async {
-        await Future.delayed(Duration(milliseconds: 30));
-        return i;
-      }).then((v) {
-        print("i = $v");
+  test(
+    'rate limit spaces starts without waiting for task completion',
+    () async {
+      final scheduler = Scheduler(20, const Duration(seconds: 1));
+      final firstGate = Completer<void>();
+      final secondStarted = Completer<void>();
+      final stopwatch = Stopwatch()..start();
+
+      final first = scheduler.run((_) async {
+        await firstGate.future;
+        return 1;
       });
-    }
-    await scheduler.wait();
+      final second = scheduler.run((_) {
+        secondStarted.complete();
+        return 2;
+      });
+
+      await secondStarted.future.timeout(const Duration(seconds: 1));
+      expect(firstGate.isCompleted, isFalse);
+      expect(
+        stopwatch.elapsed,
+        greaterThanOrEqualTo(const Duration(milliseconds: 40)),
+      );
+
+      firstGate.complete();
+      expect(await first, 1);
+      expect(await second, 2);
+      await scheduler.wait();
+    },
+  );
+
+  test('pause blocks new starts and wait includes in-flight work', () async {
+    final scheduler = Scheduler.unlimited();
+    final firstStarted = Completer<void>();
+    final firstGate = Completer<void>();
+    var secondStarted = false;
+
+    final first = scheduler.run((controller) async {
+      controller.pause();
+      firstStarted.complete();
+      await firstGate.future;
+      controller.resume();
+    });
+    final second = scheduler.run((_) {
+      secondStarted = true;
+    });
+
+    await firstStarted.future;
+    var waitCompleted = false;
+    final waiting = scheduler.wait().then((_) => waitCompleted = true);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(secondStarted, isFalse);
+    expect(waitCompleted, isFalse);
+
+    firstGate.complete();
+    await Future.wait([first, second, waiting]);
+    expect(secondStarted, isTrue);
+    expect(waitCompleted, isTrue);
+  });
+
+  test('pause raised during a rate delay blocks the next start', () async {
+    final scheduler = Scheduler(10, const Duration(seconds: 1));
+    final paused = Completer<void>();
+    late SchedulerController controller;
+    var secondStarted = false;
+
+    final first = scheduler.run((value) async {
+      controller = value;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      controller.pause();
+      paused.complete();
+    });
+    final second = scheduler.run((_) {
+      secondStarted = true;
+    });
+
+    await paused.future;
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    expect(secondStarted, isFalse);
+
+    controller.resume();
+    await Future.wait([first, second]);
+    expect(secondStarted, isTrue);
   });
 }

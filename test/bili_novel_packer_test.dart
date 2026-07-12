@@ -1,3 +1,6 @@
+@Tags(['integration'])
+library;
+
 import 'package:bili_novel_packer/novel_packer.dart';
 import 'package:bili_novel_packer/pack_argument.dart';
 import 'package:test/scaffolding.dart';
@@ -10,11 +13,13 @@ void main() {
     NovelPacker packer = NovelPacker.fromUrl(url);
     await packer.init();
     printNovelDetail(packer.novel);
-    await packer.pack(PackArgument.all(
-      addChapterTitle: false,
-      combineVolume: false,
-      packVolumes: packer.catalog.volumes,
-    ));
+    await packer.pack(
+      PackArgument.all(
+        addChapterTitle: false,
+        combineVolume: false,
+        packVolumes: packer.catalog.volumes,
+      ),
+    );
   });
 
   test("testWenku", () async {
@@ -22,10 +27,12 @@ void main() {
     NovelPacker packer = NovelPacker.fromUrl(url);
     await packer.init();
     printNovelDetail(packer.novel);
-    await packer.pack(PackArgument.all(
-      addChapterTitle: false,
-      combineVolume: false,
-      packVolumes: packer.catalog.volumes,
-    ));
+    await packer.pack(
+      PackArgument.all(
+        addChapterTitle: false,
+        combineVolume: false,
+        packVolumes: packer.catalog.volumes,
+      ),
+    );
   });
 }

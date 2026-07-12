@@ -1,3 +1,6 @@
+@Tags(['integration'])
+library;
+
 import 'dart:typed_data';
 
 import 'package:bili_novel_packer/light_novel/bili_novel/bili_novel_source.dart';
@@ -15,22 +18,25 @@ void main() {
       Scheduler scheduler = Scheduler(49, Duration(minutes: 1));
       // 先等待半分钟 等RateLimit解除
       await Future.delayed(Duration(seconds: 40));
+      final futures = <Future<void>>[];
       for (int i = 1; i <= 100; i++) {
-        scheduler.run((_) async {
-          String html = await httpGetString(
-            "https://www.bilinovel.com/novel/1860/67643.html",
-          );
-          if (html.contains("nginx") ||
-              html.contains("rate limited") ||
-              html.contains("Error") ||
-              html.contains("error code")) {
-            throw "ERROR";
-          } else {
-            print("$i OK");
-          }
-        });
+        futures.add(
+          scheduler.run((_) async {
+            String html = await httpGetString(
+              "https://www.bilinovel.com/novel/1860/67643.html",
+            );
+            if (html.contains("nginx") ||
+                html.contains("rate limited") ||
+                html.contains("Error") ||
+                html.contains("error code")) {
+              throw "ERROR";
+            } else {
+              print("$i OK");
+            }
+          }),
+        );
       }
-      await scheduler.wait();
+      await Future.wait(futures);
     },
     timeout: Timeout(Duration(hours: 1)),
   );
@@ -42,29 +48,32 @@ void main() {
       Scheduler scheduler = Scheduler(1, Duration(seconds: 1));
       // 先等待半分钟 等RateLimit解除
       // await Future.delayed(Duration(seconds: 40));
+      final futures = <Future<void>>[];
       for (int i = 1; i <= 100; i++) {
-        scheduler.run((_) async {
-          Uint8List image = await httpGetBytes(
-            "https://img3.readpai.com/2/2923/144358/170510.jpg",
-            headers: {
-              "Referer": BiliNovelSource.domain,
-              "User-Agent": BiliNovelSource.userAgent,
-              "Cache-Control": "public",
-              "Accept-Language": "zh-CN,zh;q=0.9"
-            },
-          );
-          String str = String.fromCharCodes(image);
-          var unAuth = str.contains("403");
-          var notFound = str.contains("404");
-          var nginxErr = str.contains("nginx");
-          if ((unAuth || notFound) && nginxErr) {
-            throw "ERROR";
-          } else {
-            print("$i OK");
-          }
-        });
+        futures.add(
+          scheduler.run((_) async {
+            Uint8List image = await httpGetBytes(
+              "https://img3.readpai.com/2/2923/144358/170510.jpg",
+              headers: {
+                "Referer": BiliNovelSource.domain,
+                "User-Agent": BiliNovelSource.userAgent,
+                "Cache-Control": "public",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+              },
+            );
+            String str = String.fromCharCodes(image);
+            var unAuth = str.contains("403");
+            var notFound = str.contains("404");
+            var nginxErr = str.contains("nginx");
+            if ((unAuth || notFound) && nginxErr) {
+              throw "ERROR";
+            } else {
+              print("$i OK");
+            }
+          }),
+        );
       }
-      await scheduler.wait();
+      await Future.wait(futures);
     },
     timeout: Timeout(Duration(hours: 1)),
   );
@@ -76,23 +85,26 @@ void main() {
       Scheduler scheduler = Scheduler(0, Duration(minutes: 1));
       // 先等待半分钟 等RateLimit解除
       // await Future.delayed(Duration(seconds: 40));
+      final futures = <Future<void>>[];
       for (int i = 1; i <= 100; i++) {
-        scheduler.run((_) async {
-          String html = await httpGetString(
-            "",
-            codec: gbk,
-          );
-          if (html.contains("nginx") ||
-              html.contains("rate limited") ||
-              html.contains("Error") ||
-              html.contains("error code")) {
-            throw "ERROR";
-          } else {
-            print("$i OK");
-          }
-        });
+        futures.add(
+          scheduler.run((_) async {
+            String html = await httpGetString(
+              "https://www.wenku8.net/book/3537.htm",
+              codec: gbk,
+            );
+            if (html.contains("nginx") ||
+                html.contains("rate limited") ||
+                html.contains("Error") ||
+                html.contains("error code")) {
+              throw "ERROR";
+            } else {
+              print("$i OK");
+            }
+          }),
+        );
       }
-      await scheduler.wait();
+      await Future.wait(futures);
     },
     timeout: Timeout(Duration(hours: 1)),
   );
@@ -105,26 +117,29 @@ void main() {
       // Scheduler scheduler = Scheduler.unlimited();
       // 先等待半分钟 等RateLimit解除
       // await Future.delayed(Duration(seconds: 40));
+      final futures = <Future<void>>[];
       for (int i = 1; i <= 100; i++) {
-        scheduler.run((_) async {
-          Uint8List image = await httpGetBytes(
-            "https://pic.wenku8.com/pictures/3/3762/157104/193649.jpg",
-            headers: {
-              "User-Agent": WenkuNovelSource.userAgent,
-            },
-          );
-          String str = String.fromCharCodes(image);
-          var unAuth = str.contains("403");
-          var notFound = str.contains("404");
-          var nginxErr = str.contains("nginx");
-          if ((unAuth || notFound) && nginxErr) {
-            throw "ERROR";
-          } else {
-            print("$i OK");
-          }
-        });
+        futures.add(
+          scheduler.run((_) async {
+            Uint8List image = await httpGetBytes(
+              "https://pic.wenku8.com/pictures/3/3762/157104/193649.jpg",
+              headers: {
+                "User-Agent": WenkuNovelSource.userAgent,
+              },
+            );
+            String str = String.fromCharCodes(image);
+            var unAuth = str.contains("403");
+            var notFound = str.contains("404");
+            var nginxErr = str.contains("nginx");
+            if ((unAuth || notFound) && nginxErr) {
+              throw "ERROR";
+            } else {
+              print("$i OK");
+            }
+          }),
+        );
       }
-      await scheduler.wait();
+      await Future.wait(futures);
     },
     timeout: Timeout(Duration(hours: 1)),
   );

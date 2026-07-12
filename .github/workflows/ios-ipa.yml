@@ -1,0 +1,120 @@
+name: Build unsigned iOS IPA
+
+on:
+  push:
+    branches:
+      - main
+      - codex/ios-ipa
+    tags:
+      - 'v*-ios*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      FLUTTER_VERSION: 3.44.3
+      APP_VERSION: 0.2.45
+      BUNDLE_ID: com.wjl0529.bilinovelpacker
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          flutter pub get
+
+      - name: Verify Dart and React
+        run: |
+          dart analyze
+          dart test
+          pnpm run build -- --outDir ../apps/ios/assets/web
+
+      - name: Generate iOS Runner project
+        working-directory: apps/ios
+        run: |
+          flutter create --platforms=ios --org com.wjl0529 \
+            --project-name bili_novel_packer_ios "$RUNNER_TEMP/bnp_ios_runner"
+          cp -R "$RUNNER_TEMP/bnp_ios_runner/ios" ./ios
+          ruby <<'RUBY'
+          project = 'ios/Runner.xcodeproj/project.pbxproj'
+          value = File.read(project)
+          value.gsub!(/PRODUCT_BUNDLE_IDENTIFIER = ([^;]+);/) do
+            suffix = Regexp.last_match(1).include?('RunnerTests') ? '.RunnerTests' : ''
+            "PRODUCT_BUNDLE_IDENTIFIER = #{ENV.fetch('BUNDLE_ID')}#{suffix};"
+          end
+          value.gsub!(/IPHONEOS_DEPLOYMENT_TARGET = [^;]+;/, 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;')
+          File.write(project, value)
+          podfile = 'ios/Podfile'
+          pods = File.read(podfile)
+          pods.sub!(/^#?\s*platform :ios, ['\"][^'\"]+['\"]/, "platform :ios, '15.0'")
+          File.write(podfile, pods)
+          RUBY
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 轻小说打包器" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName 轻小说打包器" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 仅用于连接应用内部的本地服务" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" ios/Runner/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" ios/Runner/Info.plist
+
+      - name: Verify Flutter app
+        working-directory: apps/ios
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+      - name: Build unsigned IPA
+        working-directory: apps/ios
+        run: |
+          flutter build ios --release --no-codesign \
+            --build-name "$APP_VERSION" \
+            --build-number "$GITHUB_RUN_NUMBER"
+          APP_PATH="build/ios/iphoneos/Runner.app"
+          test -d "$APP_PATH"
+          file "$APP_PATH/Runner" | grep -q arm64
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")" = "$BUNDLE_ID"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_PATH/Info.plist")" = "15.0"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/Runner.app
+          IPA_NAME="bili-novel-packer-ios-unsigned-${APP_VERSION}+${GITHUB_RUN_NUMBER}.ipa"
+          (cd build/ipa && ditto -c -k --sequesterRsrc Payload "../$IPA_NAME")
+          echo "IPA_NAME=$IPA_NAME" >> "$GITHUB_ENV"
+          test -f "build/$IPA_NAME"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bili-novel-packer-ios-unsigned-${{ env.APP_VERSION }}+${{ github.run_number }}.ipa
+          path: apps/ios/build/bili-novel-packer-ios-unsigned-*.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Attach IPA to tag prerelease
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          generate_release_notes: true
+          files: apps/ios/build/bili-novel-packer-ios-unsigned-*.ipa

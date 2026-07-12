@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:bili_novel_packer/light_novel/base/light_novel_model.dart';
 import 'package:bili_novel_packer/novel_packer.dart';
 import 'package:bili_novel_packer/pack_argument.dart';
 import 'package:bili_novel_packer/pack_progress.dart';
@@ -12,6 +11,7 @@ import 'package:bili_novel_packer/web/job.dart';
 import 'package:bili_novel_packer/web/job_store.dart';
 import 'package:bili_novel_packer/web/range_parser.dart';
 import 'package:bili_novel_packer/web/webdav.dart';
+import 'package:bili_novel_packer/web/volume_selector.dart';
 import 'package:path/path.dart' as path;
 import 'package:uuid/uuid.dart';
 
@@ -78,15 +78,17 @@ class JobQueue {
     final uploadStatus = _initialUploadStatus(webDavConfig);
     final jobs = <DownloadJob>[];
     for (var i = 0; i < ids.length; i++) {
-      jobs.add(DownloadJob(
-        id: uuid.v4(),
-        sourceId: ids[i],
-        url: urls[i],
-        request: request,
-        webDavConfig: webDavConfig,
-        uploadStatus: uploadStatus,
-        logs: ["已加入队列：${urls[i]}"],
-      ));
+      jobs.add(
+        DownloadJob(
+          id: uuid.v4(),
+          sourceId: ids[i],
+          url: urls[i],
+          request: request,
+          webDavConfig: webDavConfig,
+          uploadStatus: uploadStatus,
+          logs: ["已加入队列：${urls[i]}"],
+        ),
+      );
     }
     await store.addAll(jobs);
     _queue.addAll(jobs.map((job) => job.id));
@@ -130,15 +132,19 @@ class JobQueue {
       return false;
     }
     final wasActive = _activeJobId == jobId;
+    if (job.status == "canceling") {
+      return true;
+    }
     _cancelRequested.add(jobId);
-    if (job.status == "queued") {
+    if (job.status == "queued" && !wasActive) {
       _queue.remove(jobId);
       await _finishCanceled(job, "任务开始前已取消");
+      _cancelRequested.remove(jobId);
     } else {
-      await _finishCanceled(job, "任务已取消，后台正在停止当前请求");
-    }
-    if (wasActive) {
-      _releaseActiveSlot(jobId);
+      job.status = "canceling";
+      job.addLog("已请求取消，正在等待当前请求停止");
+      await store.save();
+      _publishJob(job);
     }
     return true;
   }
@@ -149,18 +155,19 @@ class JobQueue {
       return false;
     }
     final wasActive = _activeJobId == jobId;
-    _deletedJobs.add(jobId);
-    _cancelRequested.add(jobId);
+    if (wasActive) {
+      _deletedJobs.add(jobId);
+      _cancelRequested.add(jobId);
+    }
     _queue.remove(jobId);
     final deleted = await store.delete(jobId);
     if (!deleted) {
+      _deletedJobs.remove(jobId);
+      _cancelRequested.remove(jobId);
       return false;
     }
     events.publish("jobDeleted", {"id": jobId});
     _publishJobs();
-    if (wasActive) {
-      _releaseActiveSlot(jobId);
-    }
     return true;
   }
 
@@ -178,16 +185,19 @@ class JobQueue {
   }
 
   Future<int> cleanupCompleted() async {
-    final deletableJobs =
-        store.jobs.where((job) => _isTerminal(job.status)).toList();
+    final deletableJobs = store.jobs
+        .where((job) => _isTerminal(job.status))
+        .toList();
     return _deleteJobs(deletableJobs);
   }
 
   Future<int> cleanupCompletedOlderThan(DateTime cutoff) async {
     final deletableJobs = store.jobs
-        .where((job) =>
-            _isTerminal(job.status) &&
-            _cleanupReferenceAt(job).isBefore(cutoff))
+        .where(
+          (job) =>
+              _isTerminal(job.status) &&
+              _cleanupReferenceAt(job).isBefore(cutoff),
+        )
         .toList();
     return _deleteJobs(deletableJobs);
   }
@@ -221,8 +231,10 @@ class JobQueue {
     }
     final deletedIds = deletableJobs.map((job) => job.id).toList();
     for (final id in deletedIds) {
-      _deletedJobs.add(id);
-      _cancelRequested.add(id);
+      if (_activeJobId == id) {
+        _deletedJobs.add(id);
+        _cancelRequested.add(id);
+      }
       _queue.remove(id);
     }
     final deleted = await store.deleteMany(deletedIds);
@@ -261,8 +273,11 @@ class JobQueue {
       }
       if (_activeJobId == job.id) {
         _activeJobId = null;
-        _pump();
       }
+      _deletedJobs.remove(job.id);
+      _cancelRequested.remove(job.id);
+      _lastProgressBarkAt.remove(job.id);
+      _pump();
     }
   }
 
@@ -302,11 +317,11 @@ class JobQueue {
       _throwIfCanceled(job.id);
       await _sendBark(job, "start", "下载开始", "已开始下载");
 
-      final selectedVolumes = _selectVolumes(
+      final selectedVolumes = selectVolumes(
         packer.catalog,
         job.request.volumeRangeText,
       );
-      job.volumeSummary = _volumeSummary(selectedVolumes);
+      job.volumeSummary = volumeSummary(selectedVolumes);
       job.progress = 0.22;
       job.webDavConfig ??= await webDavConfigStore.load();
       job.uploadStatus = _initialUploadStatus(job.webDavConfig);
@@ -318,13 +333,15 @@ class JobQueue {
 
       final outputDir = store.outputDirFor(job.id);
       await Directory(outputDir).create(recursive: true);
-      final files = await packer.pack(PackArgument.all(
-        addChapterTitle: job.request.addChapterTitle,
-        combineVolume: job.request.combineVolume,
-        packVolumes: selectedVolumes,
-        outputDirectory: outputDir,
-        onProgress: (event) => _onPackProgress(job, event),
-      ));
+      final files = await packer.pack(
+        PackArgument.all(
+          addChapterTitle: job.request.addChapterTitle,
+          combineVolume: job.request.combineVolume,
+          packVolumes: selectedVolumes,
+          outputDirectory: outputDir,
+          onProgress: (event) => _onPackProgress(job, event),
+        ),
+      );
       _throwIfCanceled(job.id);
 
       job.outputFiles = files.map(path.basename).toList();
@@ -361,9 +378,6 @@ class JobQueue {
         "下载失败",
         "失败原因：$e",
       );
-    } finally {
-      _cancelRequested.remove(job.id);
-      _lastProgressBarkAt.remove(job.id);
     }
   }
 
@@ -378,34 +392,13 @@ class JobQueue {
       job.progress = 0.22 + boundedRatio * 0.74;
     }
     job.addLog(event.message);
-    unawaited(store.save());
+    store.scheduleSave();
     _publishJob(job);
     if ((event.type == "chapter-downloaded" ||
             event.type == "chapter-packed") &&
         ratio != null) {
       unawaited(_maybeSendProgressBark(job, ratio));
     }
-  }
-
-  List<Volume> _selectVolumes(Catalog catalog, String rangeText) {
-    if (rangeText.trim().isEmpty || rangeText.trim() == "0") {
-      return catalog.volumes;
-    }
-    final indexes = parseIntegerRange(
-      rangeText,
-      maxValue: catalog.volumes.length,
-    );
-    return indexes.map((index) => catalog.volumes[index - 1]).toList();
-  }
-
-  String _volumeSummary(List<Volume> volumes) {
-    if (volumes.isEmpty) {
-      return "未选择分卷";
-    }
-    if (volumes.length <= 3) {
-      return volumes.map((volume) => volume.toString()).join(", ");
-    }
-    return "${volumes.length} 个分卷";
   }
 
   Future<void> _sendBark(
@@ -519,14 +512,6 @@ class JobQueue {
     await store.deleteOutputs(job.id);
     await store.save();
     _publishJob(job);
-  }
-
-  void _releaseActiveSlot(String jobId) {
-    if (_activeJobId != jobId) {
-      return;
-    }
-    _activeJobId = null;
-    _pump();
   }
 
   void _publishJob(DownloadJob job) {

@@ -6,6 +6,11 @@ export type JobStatus =
   | "failed"
   | "canceled";
 
+export type RuntimeInfo = {
+  embedded: boolean;
+  platform: string | null;
+};
+
 export type BarkEvents = {
   start: boolean;
   success: boolean;

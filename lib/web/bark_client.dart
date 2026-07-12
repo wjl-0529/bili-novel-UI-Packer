@@ -28,12 +28,12 @@ class BarkEvents {
   }
 
   Map<String, dynamic> toJson() => {
-        "start": start,
-        "success": success,
-        "failure": failure,
-        "progress": progress,
-        "update": update,
-      };
+    "start": start,
+    "success": success,
+    "failure": failure,
+    "progress": progress,
+    "update": update,
+  };
 
   bool allows(String event) {
     return switch (event) {
@@ -79,18 +79,20 @@ class BarkConfig {
   }
 
   Map<String, dynamic> toJson() => {
-        "enabled": enabled,
-        "serverUrl": serverUrl,
-        "deviceKey": deviceKey,
-        "events": events.toJson(),
-        "progressThrottleSeconds": progressThrottleSeconds,
-      };
+    "enabled": enabled,
+    "serverUrl": serverUrl,
+    "deviceKey": deviceKey,
+    "events": events.toJson(),
+    "progressThrottleSeconds": progressThrottleSeconds,
+  };
 }
 
 class BarkClient {
   final http.Client _client;
 
   BarkClient({http.Client? client}) : _client = client ?? http.Client();
+
+  void close() => _client.close();
 
   Future<bool> notify({
     required BarkConfig config,
@@ -107,8 +109,9 @@ class BarkClient {
     final serverUrl = config.serverUrl.endsWith("/")
         ? config.serverUrl
         : "${config.serverUrl}/";
-    final uri =
-        Uri.parse(serverUrl).resolve(Uri.encodeComponent(config.deviceKey));
+    final uri = Uri.parse(
+      serverUrl,
+    ).resolve(Uri.encodeComponent(config.deviceKey));
 
     try {
       final response = await _client

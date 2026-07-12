@@ -6,8 +6,28 @@ import type {
   JobRequest,
   NovelPreview,
   NovelPreviewFailure,
+  RuntimeInfo,
   WebDavConfig,
 } from "./types";
+
+export class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+const unauthorizedListeners = new Set<() => void>();
+
+export function subscribeUnauthorized(listener: () => void) {
+  unauthorizedListeners.add(listener);
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
+}
 
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
@@ -22,7 +42,14 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
-    throw new Error(data.message ?? `请求失败：${response.status}`);
+    const error = new HttpError(
+      response.status,
+      data.message ?? `请求失败：${response.status}`,
+    );
+    if (response.status === 401 && url !== "/api/login") {
+      unauthorizedListeners.forEach((listener) => listener());
+    }
+    throw error;
   }
   return data as T;
 }
@@ -40,6 +67,10 @@ export function logout() {
 
 export function me() {
   return request<{ authenticated: boolean }>("/api/me");
+}
+
+export function getRuntime() {
+  return request<RuntimeInfo>("/api/runtime");
 }
 
 export function getJobs() {

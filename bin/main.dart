@@ -1,13 +1,13 @@
 import 'dart:io';
 
 import 'package:bili_novel_packer/light_novel/base/light_novel_model.dart';
-import 'package:bili_novel_packer/log.dart';
+import 'package:bili_novel_packer/logger.dart';
 import 'package:bili_novel_packer/novel_packer.dart';
 import 'package:bili_novel_packer/pack_argument.dart';
 import 'package:console/console.dart';
 
 const String gitUrl = "https://github.com/Montaro2017/bili_novel_packer";
-const String version = "0.2.43";
+const String version = "0.2.45";
 
 void main(List<String> args) async {
   printWelcome();

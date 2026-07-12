@@ -59,27 +59,27 @@ class WebDavConfig {
   }
 
   Map<String, dynamic> toJson() => {
-        "enabled": enabled,
-        "serverUrl": serverUrl,
-        "username": username,
-        "password": password,
-        "basePath": basePath,
-      };
+    "enabled": enabled,
+    "serverUrl": serverUrl,
+    "username": username,
+    "password": password,
+    "basePath": basePath,
+  };
 
   Map<String, dynamic> toSafeJson() => {
-        "enabled": enabled,
-        "serverUrl": serverUrl,
-        "username": username,
-        "basePath": basePath,
-        "hasPassword": hasPassword,
-      };
+    "enabled": enabled,
+    "serverUrl": serverUrl,
+    "username": username,
+    "basePath": basePath,
+    "hasPassword": hasPassword,
+  };
 }
 
 class WebDavConfigStore {
   final File _file;
 
   WebDavConfigStore(String dataDir)
-      : _file = File(path.join(dataDir, "webdav-config.json"));
+    : _file = File(path.join(dataDir, "webdav-config.json"));
 
   Future<WebDavConfig> load() async {
     if (!await _file.exists()) {
@@ -106,17 +106,19 @@ class WebDavConfigStore {
     final nextPassword = clearPassword
         ? ""
         : passwordInput != null && passwordInput.isNotEmpty
-            ? passwordInput
-            : current.password;
-    return save(WebDavConfig(
-      enabled: payload["enabled"] == true,
-      serverUrl: (payload["serverUrl"] as String?)?.trim() ?? "",
-      username: (payload["username"] as String?)?.trim() ?? "",
-      password: nextPassword,
-      basePath: _normalizeBasePath(
-        (payload["basePath"] as String?)?.trim() ?? current.basePath,
+        ? passwordInput
+        : current.password;
+    return save(
+      WebDavConfig(
+        enabled: payload["enabled"] == true,
+        serverUrl: (payload["serverUrl"] as String?)?.trim() ?? "",
+        username: (payload["username"] as String?)?.trim() ?? "",
+        password: nextPassword,
+        basePath: _normalizeBasePath(
+          (payload["basePath"] as String?)?.trim() ?? current.basePath,
+        ),
       ),
-    ));
+    );
   }
 }
 
@@ -150,6 +152,8 @@ class WebDavClient {
     http.Client? client,
     this.timeout = const Duration(seconds: 30),
   }) : _client = client ?? http.Client();
+
+  void close() => _client.close();
 
   Future<void> test(WebDavConfig config) async {
     _validate(config);
@@ -276,15 +280,17 @@ class WebDavClient {
   }
 
   Map<String, String> _authHeaders(WebDavConfig config) {
-    final token =
-        base64Encode(utf8.encode("${config.username}:${config.password}"));
+    final token = base64Encode(
+      utf8.encode("${config.username}:${config.password}"),
+    );
     return {"authorization": "Basic $token"};
   }
 
   Uri _resolve(WebDavConfig config, List<String> remoteSegments) {
     final base = Uri.parse(config.serverUrl.trim());
-    final baseSegments =
-        base.pathSegments.where((segment) => segment.isNotEmpty);
+    final baseSegments = base.pathSegments.where(
+      (segment) => segment.isNotEmpty,
+    );
     return base.replace(
       pathSegments: [...baseSegments, ...remoteSegments],
       query: "",

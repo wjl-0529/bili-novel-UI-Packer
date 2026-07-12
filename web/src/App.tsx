@@ -35,6 +35,7 @@ import {
   getAutoUpdateConfig,
   getCleanupConfig,
   getJobs,
+  getRuntime,
   getWebDavConfig,
   login,
   logout,
@@ -45,6 +46,7 @@ import {
   saveAutoUpdateConfig,
   saveCleanupConfig,
   saveWebDavConfig,
+  subscribeUnauthorized,
   testWebDavConfig,
 } from "./api";
 import type {
@@ -58,6 +60,7 @@ import type {
   JobStatus,
   NovelPreview,
   NovelPreviewFailure,
+  RuntimeInfo,
   WebDavConfig,
 } from "./types";
 
@@ -141,6 +144,10 @@ function createDefaultRequest(): JobRequest {
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo>({
+    embedded: false,
+    platform: null,
+  });
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [appView, setAppView] = useState<AppView>("workspace");
@@ -170,6 +177,16 @@ export function App() {
   const [actionJobIds, setActionJobIds] = useState<Set<string>>(() => new Set());
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
   const preferredSelectedJobId = useRef<string | null>(null);
+
+  const clearLocalSession = useCallback(() => {
+    preferredSelectedJobId.current = null;
+    setAuthenticated(false);
+    setJobs([]);
+    setSelectedJobId(null);
+    setAutoUpdateConfig(defaultAutoUpdateConfig);
+    setAppView("workspace");
+    setMobileTab("download");
+  }, []);
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0],
@@ -263,20 +280,43 @@ export function App() {
     });
   }, []);
 
+  useEffect(() => subscribeUnauthorized(clearLocalSession), [clearLocalSession]);
+
   useEffect(() => {
-    me()
-      .then((response) => {
-        setAuthenticated(response.authenticated);
-        if (response.authenticated) {
-          return Promise.all([
-            refreshJobs(),
-            refreshWebDavConfig(),
-            refreshCleanupConfig(),
-            refreshAutoUpdateConfig(),
-          ]);
+    let active = true;
+
+    const initialize = async () => {
+      try {
+        const runtime = await getRuntime();
+        if (!active) {
+          return;
         }
-      })
-      .catch(() => setAuthenticated(false));
+        setRuntimeInfo(runtime);
+        const response = await me();
+        if (!active) {
+          return;
+        }
+        setAuthenticated(response.authenticated);
+        if (!response.authenticated) {
+          return;
+        }
+        await Promise.allSettled([
+          refreshJobs(),
+          refreshWebDavConfig(),
+          refreshCleanupConfig(),
+          refreshAutoUpdateConfig(),
+        ]);
+      } catch {
+        if (active) {
+          setAuthenticated(false);
+        }
+      }
+    };
+
+    void initialize();
+    return () => {
+      active = false;
+    };
   }, [refreshJobs, refreshWebDavConfig, refreshCleanupConfig, refreshAutoUpdateConfig]);
 
   useEffect(() => {
@@ -292,6 +332,9 @@ export function App() {
     const source = new EventSource("/api/events");
     let lastRealtimeEventAt = Date.now();
     let fallbackTimer: number | undefined;
+    let fallbackPollInFlight = false;
+    let realtimeRevision = 0;
+    let disposed = false;
     const fallbackIntervalMs = 1500;
     const staleRealtimeMs = 8000;
 
@@ -302,13 +345,31 @@ export function App() {
       }
     };
 
-    const startFallback = () => {
-      if (fallbackTimer !== undefined) {
+    const pollFallback = async () => {
+      if (disposed || fallbackPollInFlight) {
         return;
       }
-      void refreshJobs().catch(() => undefined);
+      fallbackPollInFlight = true;
+      const revisionAtStart = realtimeRevision;
+      try {
+        const response = await getJobs();
+        if (!disposed && revisionAtStart === realtimeRevision) {
+          applyJobsSnapshot(response.jobs);
+        }
+      } catch {
+        // A 401 is handled by subscribeUnauthorized; other failures retry later.
+      } finally {
+        fallbackPollInFlight = false;
+      }
+    };
+
+    const startFallback = () => {
+      if (disposed || fallbackTimer !== undefined) {
+        return;
+      }
+      void pollFallback();
       fallbackTimer = window.setInterval(() => {
-        void refreshJobs().catch(() => undefined);
+        void pollFallback();
       }, fallbackIntervalMs);
     };
 
@@ -320,6 +381,7 @@ export function App() {
     }, 3000);
 
     source.onopen = () => {
+      realtimeRevision += 1;
       lastRealtimeEventAt = Date.now();
       setRealtimeState("connected");
       stopFallback();
@@ -333,6 +395,7 @@ export function App() {
     source.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as EventMessage;
+        realtimeRevision += 1;
         lastRealtimeEventAt = Date.now();
         setRealtimeState("connected");
         stopFallback();
@@ -356,11 +419,12 @@ export function App() {
     };
 
     return () => {
+      disposed = true;
       window.clearInterval(watchdogTimer);
       stopFallback();
       source.close();
     };
-  }, [authenticated, applyJobsSnapshot, refreshJobs]);
+  }, [authenticated, applyJobsSnapshot]);
 
   useEffect(() => {
     const preferred = preferredSelectedJobId.current;
@@ -398,13 +462,13 @@ export function App() {
   }
 
   async function handleLogout() {
-    await logout();
-    setAuthenticated(false);
-    setJobs([]);
-    setSelectedJobId(null);
-    setAutoUpdateConfig(defaultAutoUpdateConfig);
-    setAppView("workspace");
-    setMobileTab("download");
+    try {
+      await logout();
+    } catch {
+      // Local logout must still work when the session has expired or the server is offline.
+    } finally {
+      clearLocalSession();
+    }
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -736,6 +800,23 @@ export function App() {
   }
 
   if (!authenticated) {
+    if (runtimeInfo.embedded) {
+      return (
+        <main className="login-shell">
+          <section className="login-panel">
+            <div className="brand-mark">
+              <ShieldCheck size={30} />
+            </div>
+            <h1>本地会话初始化失败</h1>
+            <p>请重新载入应用以创建新的安全会话。</p>
+            <button className="primary-button" onClick={() => window.location.reload()}>
+              <RotateCcw size={17} />
+              重新载入
+            </button>
+          </section>
+        </main>
+      );
+    }
     return (
       <main className="login-shell">
         <form className="login-panel" onSubmit={handleLogin}>
@@ -770,6 +851,7 @@ export function App() {
     <main className="app-shell">
       <Topbar
         stats={stats}
+        embedded={runtimeInfo.embedded}
         activeView={appView}
         onShowWorkspace={() => setAppView("workspace")}
         onShowSettings={() => {
@@ -807,6 +889,7 @@ export function App() {
           />
         ) : (
           <WorkspaceView
+            embedded={runtimeInfo.embedded}
             request={request}
             busy={busy}
             previewBusy={previewBusy}
@@ -845,6 +928,7 @@ export function App() {
       <section className="mobile-surface" aria-label="轻小说打包器手机工作区">
         <MobileTabPanel
           activeTab={mobileTab}
+          embedded={runtimeInfo.embedded}
           request={request}
           busy={busy}
           previewBusy={previewBusy}
@@ -905,12 +989,14 @@ export function App() {
 
 function Topbar({
   stats,
+  embedded,
   activeView,
   onShowWorkspace,
   onShowSettings,
   onLogout,
 }: {
   stats: JobStats;
+  embedded: boolean;
   activeView: AppView;
   onShowWorkspace: () => void;
   onShowSettings: () => void;
@@ -945,16 +1031,19 @@ function Topbar({
           <Settings size={17} />
           设置
         </button>
-        <button className="ghost-button" onClick={onLogout}>
-          <LogOut size={17} />
-          退出
-        </button>
+        {!embedded ? (
+          <button className="ghost-button" onClick={onLogout}>
+            <LogOut size={17} />
+            退出
+          </button>
+        ) : null}
       </div>
     </header>
   );
 }
 
 type WorkspaceViewProps = {
+  embedded: boolean;
   request: JobRequest;
   busy: boolean;
   previewBusy: boolean;
@@ -989,6 +1078,7 @@ type WorkspaceViewProps = {
 };
 
 function WorkspaceView({
+  embedded,
   request,
   busy,
   previewBusy,
@@ -1061,6 +1151,7 @@ function WorkspaceView({
 
       <JobDetail
         job={selectedJob}
+        embedded={embedded}
         busy={selectedJob ? actionJobIds.has(selectedJob.id) : false}
         webDavEnabled={webDavEnabled}
         onDeleteOutputs={onDeleteOutputs}
@@ -1226,6 +1317,7 @@ function MobileTabPanel({
     return (
       <JobDetail
         job={props.selectedJob}
+        embedded={props.embedded}
         busy={props.selectedJob ? props.actionJobIds.has(props.selectedJob.id) : false}
         webDavEnabled={props.webDavEnabled}
         onDeleteOutputs={props.onDeleteOutputs}
@@ -1887,11 +1979,13 @@ function WebDavPanel({
 
 function JobDetail({
   job,
+  embedded,
   busy,
   webDavEnabled,
   onDeleteOutputs,
 }: {
   job?: DownloadJob;
+  embedded: boolean;
   busy: boolean;
   webDavEnabled: boolean;
   onDeleteOutputs: (job: DownloadJob) => Promise<void>;
@@ -1944,7 +2038,11 @@ function JobDetail({
           <div>
             <span>保存位置</span>
             <strong title={outputDir}>{outputDir}</strong>
-            <p>Docker 本地默认映射到 ./data/outputs/{job.id}</p>
+            <p>
+              {embedded
+                ? "文件保存在 App 沙箱；长任务请保持应用在前台，完成后点文件名分享到“文件”或阅读器。"
+                : `Docker 本地默认映射到 ./data/outputs/${job.id}`}
+            </p>
           </div>
           <button
             className="ghost-button"
