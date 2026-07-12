@@ -1,14 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
-import 'package:bili_novel_packer/web/server_runtime.dart';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import 'web_asset_installer.dart';
+const remoteServerUri = 'https://book.jinhub.cn';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,9 +39,11 @@ class IosShellPage extends StatefulWidget {
 }
 
 class _IosShellPageState extends State<IosShellPage> {
-  WebServerRuntime? _runtime;
+  static final Uri _serverUri = Uri.parse(remoteServerUri);
+
   WebViewController? _controller;
   Object? _startupError;
+  bool _exporting = false;
 
   @override
   void initState() {
@@ -51,47 +52,37 @@ class _IosShellPageState extends State<IosShellPage> {
   }
 
   Future<void> _start() async {
-    final oldRuntime = _runtime;
-    _runtime = null;
-    _controller = null;
     if (mounted) {
-      setState(() => _startupError = null);
-    }
-    if (oldRuntime != null) {
-      await oldRuntime.close();
+      setState(() {
+        _controller = null;
+        _startupError = null;
+      });
     }
     try {
-      final support = await getApplicationSupportDirectory();
-      final webRoot = await installBundledWebAssets(support);
-      final runtime = await WebServerRuntime.start(
-        dataDir: path.join(support.path, 'data'),
-        webRoot: webRoot.path,
-        host: InternetAddress.loopbackIPv4.address,
-        port: 0,
-        embeddedPlatform: 'ios',
-      );
       final controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..setBackgroundColor(const Color(0xfff8fafc))
+        ..addJavaScriptChannel(
+          'NativeExport',
+          onMessageReceived: (message) {
+            unawaited(_handleExportMessage(message.message));
+          },
+        )
         ..setNavigationDelegate(
           NavigationDelegate(
-            onNavigationRequest: (request) =>
-                _handleNavigation(runtime, request),
+            onNavigationRequest: (request) => _handleNavigation(request),
+            onWebResourceError: (error) {
+              if (error.isForMainFrame == true && mounted) {
+                setState(() => _startupError = error.description);
+              }
+            },
           ),
         );
-      await controller.loadRequest(
-        runtime.bootstrapUri!,
-        method: LoadRequestMethod.post,
-        headers: {'Authorization': 'Bearer ${runtime.bootstrapToken}'},
-      );
+      await controller.loadRequest(_serverUri);
       if (!mounted) {
-        await runtime.close();
         return;
       }
-      setState(() {
-        _runtime = runtime;
-        _controller = controller;
-      });
+      setState(() => _controller = controller);
     } catch (error) {
       if (mounted) {
         setState(() => _startupError = error);
@@ -99,38 +90,119 @@ class _IosShellPageState extends State<IosShellPage> {
     }
   }
 
-  FutureOr<NavigationDecision> _handleNavigation(
-    WebServerRuntime runtime,
-    NavigationRequest request,
-  ) {
+  FutureOr<NavigationDecision> _handleNavigation(NavigationRequest request) {
     final uri = Uri.tryParse(request.url);
-    if (uri == null || !runtime.isOutputDownloadUri(uri)) {
+    if (uri == null || !isRemoteOutputUri(_serverUri, uri)) {
       return NavigationDecision.navigate;
     }
-    unawaited(_shareOutput(runtime, uri));
+    unawaited(_requestNativeExport(uri));
     return NavigationDecision.prevent;
   }
 
-  Future<void> _shareOutput(WebServerRuntime runtime, Uri uri) async {
-    final file = runtime.resolveOutputFileFromUri(uri);
-    if (file == null) {
-      _showMessage('文件不存在或已被清理');
+  Future<void> _requestNativeExport(Uri outputUri) async {
+    if (_exporting) {
+      _showMessage('已有文件正在导出');
       return;
     }
-    final box = context.findRenderObject() as RenderBox?;
-    final origin = box == null
-        ? const Rect.fromLTWH(0, 0, 1, 1)
-        : box.localToGlobal(Offset.zero) & box.size;
+    final controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    final segments = outputUri.pathSegments;
+    final body = jsonEncode({'jobId': segments[2], 'fileName': segments[4]});
+    setState(() => _exporting = true);
+    _showMessage('正在从服务器准备 EPUB…');
     try {
+      await controller.runJavaScript('''
+        (async () => {
+          try {
+            const response = await fetch('/api/native/exports', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {'content-type': 'application/json'},
+              body: ${jsonEncode(body)}
+            });
+            const payload = await response.text();
+            NativeExport.postMessage(JSON.stringify({
+              ok: response.ok,
+              status: response.status,
+              payload: payload
+            }));
+          } catch (error) {
+            NativeExport.postMessage(JSON.stringify({
+              ok: false,
+              status: 0,
+              payload: JSON.stringify({message: String(error)})
+            }));
+          }
+        })();
+      ''');
+    } catch (error) {
+      if (mounted) {
+        setState(() => _exporting = false);
+      }
+      _showMessage('无法请求服务器导出：$error');
+    }
+  }
+
+  Future<void> _handleExportMessage(String message) async {
+    try {
+      final envelope = jsonDecode(message) as Map<String, dynamic>;
+      final payloadText = envelope['payload'] as String? ?? '{}';
+      final payload = jsonDecode(payloadText) as Map<String, dynamic>;
+      if (envelope['ok'] != true) {
+        throw StateError(
+          payload['message']?.toString() ?? '服务器导出失败（${envelope['status']}）',
+        );
+      }
+      final relativeUrl = payload['url'] as String?;
+      final fileName = payload['fileName'] as String?;
+      if (relativeUrl == null || fileName == null) {
+        throw const FormatException('服务器没有返回导出地址');
+      }
+      await _downloadAndShare(_serverUri.resolve(relativeUrl), fileName);
+    } catch (error) {
+      _showMessage('导出失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() => _exporting = false);
+      }
+    }
+  }
+
+  Future<void> _downloadAndShare(Uri uri, String fileName) async {
+    final client = HttpClient();
+    File? temporaryFile;
+    try {
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      if (response.statusCode != HttpStatus.ok) {
+        throw HttpException('服务器返回 ${response.statusCode}');
+      }
+      final temporaryDirectory = await getTemporaryDirectory();
+      final safeName = fileName.replaceAll(RegExp(r'[/\\]'), '_');
+      temporaryFile = File('${temporaryDirectory.path}/$safeName');
+      await response.pipe(temporaryFile.openWrite());
+
+      if (!mounted) {
+        return;
+      }
+      final box = context.findRenderObject() as RenderBox?;
+      final origin = box == null
+          ? const Rect.fromLTWH(0, 0, 1, 1)
+          : box.localToGlobal(Offset.zero) & box.size;
       await SharePlus.instance.share(
         ShareParams(
-          files: [XFile(file.path, mimeType: 'application/epub+zip')],
-          subject: path.basename(file.path),
+          files: [XFile(temporaryFile.path, mimeType: 'application/epub+zip')],
+          subject: fileName,
           sharePositionOrigin: origin,
         ),
       );
-    } catch (error) {
-      _showMessage('无法打开分享面板：$error');
+    } finally {
+      client.close(force: true);
+      if (temporaryFile != null && await temporaryFile.exists()) {
+        await temporaryFile.delete();
+      }
     }
   }
 
@@ -141,15 +213,6 @@ class _IosShellPageState extends State<IosShellPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  @override
-  void dispose() {
-    final runtime = _runtime;
-    if (runtime != null) {
-      unawaited(runtime.close());
-    }
-    super.dispose();
   }
 
   @override
@@ -168,6 +231,31 @@ class _IosShellPageState extends State<IosShellPage> {
       ),
     );
   }
+}
+
+bool isRemoteOutputUri(Uri serverUri, Uri candidate) {
+  final serverPort = serverUri.hasPort
+      ? serverUri.port
+      : serverUri.scheme == 'https'
+      ? 443
+      : 80;
+  final candidatePort = candidate.hasPort
+      ? candidate.port
+      : candidate.scheme == 'https'
+      ? 443
+      : 80;
+  if (candidate.scheme != serverUri.scheme ||
+      candidate.host != serverUri.host ||
+      candidatePort != serverPort) {
+    return false;
+  }
+  final segments = candidate.pathSegments;
+  return segments.length == 5 &&
+      segments[0] == 'api' &&
+      segments[1] == 'jobs' &&
+      segments[2].isNotEmpty &&
+      segments[3] == 'files' &&
+      segments[4].isNotEmpty;
 }
 
 class StartupErrorPage extends StatelessWidget {
@@ -190,9 +278,9 @@ class StartupErrorPage extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.error_outline, size: 48),
+                const Icon(Icons.cloud_off_outlined, size: 48),
                 const SizedBox(height: 16),
-                const Text('本地服务启动失败', style: TextStyle(fontSize: 20)),
+                const Text('无法连接服务器', style: TextStyle(fontSize: 20)),
                 const SizedBox(height: 8),
                 Text('$error', textAlign: TextAlign.center),
                 const SizedBox(height: 20),

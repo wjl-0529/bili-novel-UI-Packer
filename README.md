@@ -72,7 +72,7 @@ dart compile exe bin/server.dart -o ./build/bili_novel_packer_server
 2. 下载 Actions/Release 中名称以 `bili-novel-packer-ios-unsigned-` 开头的 IPA。
 3. 在侧载工具中选择 IPA，使用自己的 Apple ID 完成重签并安装。
 
-免费 Apple ID 的签名通常需要周期性刷新，具体周期以所用侧载工具和 Apple 当前规则为准。应用数据保存在 iOS App 沙箱；EPUB 生成后点击文件名，通过系统分享面板保存到“文件”、AirDrop 或其他阅读器。长任务运行期间请让应用保持前台，iOS 暂停应用进程时下载也会暂停。
+免费 Apple ID 的签名通常需要周期性刷新，具体周期以所用侧载工具和 Apple 当前规则为准。iOS App 连接 `https://book.jinhub.cn`，下载与 EPUB 打包任务在服务器持续执行，关闭 App 不会中断任务；重新打开后会恢复任务列表和实时进度。EPUB 生成后点击文件名，通过一次性安全链接下载并调用系统分享面板，可保存到“文件”、AirDrop 或其他阅读器。
 
 如后续提供付费 Apple Developer 证书和匹配 `com.wjl0529.bilinovelpacker` 的描述文件，可以另加 Ad Hoc 或 TestFlight 签名工作流。
 

@@ -4,8 +4,3 @@
 /.packages
 /build/
 /ios/
-/assets/web/*
-!/assets/web/index.html
-!/assets/web/assets/
-/assets/web/assets/*
-!/assets/web/assets/.gitkeep

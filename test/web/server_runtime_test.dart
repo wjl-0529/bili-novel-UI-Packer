@@ -91,6 +91,23 @@ void main() {
     final fileUri = runtime.baseUri.resolve('/api/jobs/job-1/files/novel.epub');
     expect(runtime.isOutputDownloadUri(fileUri), isTrue);
     expect(runtime.resolveOutputFileFromUri(fileUri)?.path, output.path);
+
+    final exportResponse = await client.post(
+      runtime.baseUri.resolve('/api/native/exports'),
+      headers: {
+        'content-type': 'application/json',
+        'cookie': cookie,
+      },
+      body: jsonEncode({'jobId': job.id, 'fileName': 'novel.epub'}),
+    );
+    expect(exportResponse.statusCode, 201);
+    final exportJson = jsonDecode(exportResponse.body) as Map<String, dynamic>;
+    final exportUri = runtime.baseUri.resolve(exportJson['url'] as String);
+    final exportedFile = await client.get(exportUri);
+    expect(exportedFile.statusCode, 200);
+    expect(exportedFile.bodyBytes, [1, 2, 3]);
+    expect((await client.get(exportUri)).statusCode, 404);
+
     expect(
       runtime.isOutputDownloadUri(
         runtime.baseUri.resolve('/api/jobs/job-1/files/a/b.epub'),

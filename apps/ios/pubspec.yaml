@@ -7,11 +7,8 @@ environment:
   sdk: '>=3.11.0 <4.0.0'
 
 dependencies:
-  bili_novel_packer:
-    path: ../..
   flutter:
     sdk: flutter
-  path: ^1.9.1
   path_provider: ^2.1.6
   share_plus: ^13.2.0
   webview_flutter: ^4.14.1
@@ -23,6 +20,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/web/
-    - assets/web/assets/
