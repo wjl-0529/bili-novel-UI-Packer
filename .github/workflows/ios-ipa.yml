@@ -101,9 +101,10 @@ jobs:
           mkdir -p build/ipa/Payload
           cp -R "$APP_PATH" build/ipa/Payload/Runner.app
           IPA_NAME="bili-novel-packer-ios-unsigned-${APP_VERSION}+${GITHUB_RUN_NUMBER}.ipa"
-          (cd build/ipa && ditto -c -k --sequesterRsrc Payload "../$IPA_NAME")
+          (cd build/ipa && ditto -c -k --sequesterRsrc --keepParent Payload "../$IPA_NAME")
           echo "IPA_NAME=$IPA_NAME" >> "$GITHUB_ENV"
           test -f "build/$IPA_NAME"
+          unzip -l "build/$IPA_NAME" | grep -q 'Payload/Runner.app/Runner'
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
