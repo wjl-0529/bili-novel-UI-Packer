@@ -68,9 +68,11 @@ jobs:
           value.gsub!(/IPHONEOS_DEPLOYMENT_TARGET = [^;]+;/, 'IPHONEOS_DEPLOYMENT_TARGET = 15.0;')
           File.write(project, value)
           podfile = 'ios/Podfile'
-          pods = File.read(podfile)
-          pods.sub!(/^#?\s*platform :ios, ['\"][^'\"]+['\"]/, "platform :ios, '15.0'")
-          File.write(podfile, pods)
+          if File.exist?(podfile)
+            pods = File.read(podfile)
+            pods.sub!(/^#?\s*platform :ios, ['\"][^'\"]+['\"]/, "platform :ios, '15.0'")
+            File.write(podfile, pods)
+          end
           RUBY
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 轻小说打包器" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleName 轻小说打包器" ios/Runner/Info.plist
