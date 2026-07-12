@@ -50,7 +50,11 @@ jobs:
         run: |
           dart analyze
           dart test
-          pnpm run build -- --outDir ../apps/ios/assets/web
+          pnpm exec tsc
+          pnpm exec vite build --outDir "$GITHUB_WORKSPACE/apps/ios/assets/web" --emptyOutDir
+          test -s apps/ios/assets/web/index.html
+          find apps/ios/assets/web -type f -name '*.js' -size +100k | grep -q .
+          ! grep -q 'Web 资源将在 GitHub Actions 构建时替换' apps/ios/assets/web/index.html
 
       - name: Generate iOS Runner project
         working-directory: apps/ios
@@ -98,6 +102,10 @@ jobs:
           file "$APP_PATH/Runner" | grep -q arm64
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")" = "$BUNDLE_ID"
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_PATH/Info.plist")" = "15.0"
+          BUNDLED_WEB="$APP_PATH/Frameworks/App.framework/flutter_assets/assets/web"
+          test -s "$BUNDLED_WEB/index.html"
+          find "$BUNDLED_WEB" -type f -name '*.js' -size +100k | grep -q .
+          ! grep -q 'Web 资源将在 GitHub Actions 构建时替换' "$BUNDLED_WEB/index.html"
           mkdir -p build/ipa/Payload
           cp -R "$APP_PATH" build/ipa/Payload/Runner.app
           IPA_NAME="bili-novel-packer-ios-unsigned-${APP_VERSION}+${GITHUB_RUN_NUMBER}.ipa"
