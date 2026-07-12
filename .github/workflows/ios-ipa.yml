@@ -53,8 +53,11 @@ jobs:
           pnpm exec tsc
           pnpm exec vite build --outDir "$GITHUB_WORKSPACE/apps/ios/assets/web" --emptyOutDir
           test -s apps/ios/assets/web/index.html
-          find apps/ios/assets/web -type f -name '*.js' -size +100k | grep -q .
+          SOURCE_JS="$(find apps/ios/assets/web -type f -name '*.js' -print -quit)"
+          test -n "$SOURCE_JS"
+          test "$(wc -c < "$SOURCE_JS")" -gt 100000
           ! grep -q 'Web 资源将在 GitHub Actions 构建时替换' apps/ios/assets/web/index.html
+          echo "Verified React bundle: $SOURCE_JS ($(wc -c < "$SOURCE_JS") bytes)"
 
       - name: Generate iOS Runner project
         working-directory: apps/ios
@@ -104,15 +107,19 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_PATH/Info.plist")" = "15.0"
           BUNDLED_WEB="$APP_PATH/Frameworks/App.framework/flutter_assets/assets/web"
           test -s "$BUNDLED_WEB/index.html"
-          find "$BUNDLED_WEB" -type f -name '*.js' -size +100k | grep -q .
+          BUNDLED_JS="$(find "$BUNDLED_WEB" -type f -name '*.js' -print -quit)"
+          test -n "$BUNDLED_JS"
+          test "$(wc -c < "$BUNDLED_JS")" -gt 100000
           ! grep -q 'Web 资源将在 GitHub Actions 构建时替换' "$BUNDLED_WEB/index.html"
+          echo "Verified bundled React asset: $BUNDLED_JS ($(wc -c < "$BUNDLED_JS") bytes)"
           mkdir -p build/ipa/Payload
           cp -R "$APP_PATH" build/ipa/Payload/Runner.app
           IPA_NAME="bili-novel-packer-ios-unsigned-${APP_VERSION}+${GITHUB_RUN_NUMBER}.ipa"
           (cd build/ipa && ditto -c -k --sequesterRsrc --keepParent Payload "../$IPA_NAME")
           echo "IPA_NAME=$IPA_NAME" >> "$GITHUB_ENV"
           test -f "build/$IPA_NAME"
-          unzip -l "build/$IPA_NAME" | grep -q 'Payload/Runner.app/Runner'
+          unzip -l "build/$IPA_NAME" > build/ipa-contents.txt
+          grep -q 'Payload/Runner.app/Runner' build/ipa-contents.txt
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
