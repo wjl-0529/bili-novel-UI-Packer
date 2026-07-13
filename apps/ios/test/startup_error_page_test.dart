@@ -62,4 +62,37 @@ void main() {
     await tester.pump();
     expect(connectedUrl, 'http://192.168.31.56:8080');
   });
+
+  testWidgets('server dialog returns a normalized server origin', (
+    tester,
+  ) async {
+    String? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async {
+              selected = await showDialog<String>(
+                context: context,
+                builder: (context) =>
+                    const ServerAddressDialog(initialValue: remoteServerUri),
+              );
+            },
+            child: const Text('打开'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField),
+      'https://book.jinhub.cn/path?from=ios',
+    );
+    await tester.tap(find.text('连接'));
+    await tester.pumpAndSettle();
+
+    expect(selected, remoteServerUri);
+  });
 }

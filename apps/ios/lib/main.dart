@@ -151,6 +151,22 @@ class _IosShellPageState extends State<IosShellPage> {
     return File('${directory.path}/$_serverConfigFileName');
   }
 
+  Future<void> _showServerDialog() async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) =>
+          ServerAddressDialog(initialValue: _serverUri.toString()),
+    );
+    if (selected == null || !mounted) {
+      return;
+    }
+    try {
+      await _changeServer(selected);
+    } catch (error) {
+      _showMessage('切换服务器失败：$error');
+    }
+  }
+
   FutureOr<NavigationDecision> _handleNavigation(NavigationRequest request) {
     final uri = Uri.tryParse(request.url);
     if (uri == null || !isRemoteOutputUri(_serverUri, uri)) {
@@ -291,7 +307,35 @@ class _IosShellPageState extends State<IosShellPage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 44,
+        titleSpacing: 16,
+        title: Row(
+          children: [
+            const Icon(Icons.dns_outlined, size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _serverUri.authority,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: '切换服务器',
+            onPressed: _showServerDialog,
+            icon: const Icon(Icons.settings_ethernet),
+          ),
+        ],
+      ),
       body: SafeArea(
+        top: false,
         bottom: false,
         child: Stack(
           children: [
@@ -325,6 +369,68 @@ Uri? normalizeServerUri(String value) {
     host: uri.host,
     port: uri.hasPort ? uri.port : null,
   );
+}
+
+class ServerAddressDialog extends StatefulWidget {
+  final String initialValue;
+
+  const ServerAddressDialog({required this.initialValue, super.key});
+
+  @override
+  State<ServerAddressDialog> createState() => _ServerAddressDialogState();
+}
+
+class _ServerAddressDialogState extends State<ServerAddressDialog> {
+  late final TextEditingController _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final uri = normalizeServerUri(_controller.text);
+    if (uri == null) {
+      setState(() => _error = '请输入有效的 HTTP 或 HTTPS 地址');
+      return;
+    }
+    Navigator.of(context).pop(uri.toString());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('切换服务器'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.url,
+        autocorrect: false,
+        enableSuggestions: false,
+        decoration: InputDecoration(
+          labelText: '服务器地址',
+          errorText: _error,
+          border: const OutlineInputBorder(),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('连接')),
+      ],
+    );
+  }
 }
 
 bool isRemoteOutputUri(Uri serverUri, Uri candidate) {
