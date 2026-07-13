@@ -275,22 +275,40 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? body,
   }) async {
-    HttpClientResponse response;
-    try {
-      final request = await _httpClient.openUrl(method, baseUri.resolve(path));
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      if (body != null) {
-        request.headers.contentType = ContentType.json;
-        request.write(jsonEncode(body));
+    late HttpClientResponse response;
+    ApiException? networkError;
+    final attempts = method == 'GET' ? 2 : 1;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      try {
+        final request = await _httpClient.openUrl(
+          method,
+          baseUri.resolve(path),
+        );
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.48');
+        if (body != null) {
+          request.headers.contentType = ContentType.json;
+          request.write(jsonEncode(body));
+        }
+        _applyCookie(request);
+        response = await request.close().timeout(const Duration(seconds: 30));
+        networkError = null;
+        break;
+      } on TimeoutException {
+        networkError = const ApiException(0, '连接服务器超时，请检查网络和服务器地址');
+      } on SocketException catch (error) {
+        networkError = ApiException(0, '无法连接服务器：${error.message}');
+      } on TlsException catch (error) {
+        networkError = ApiException(0, 'HTTPS 连接失败：${error.message}');
+      } on HttpException catch (error) {
+        networkError = ApiException(0, '网络请求失败：${error.message}');
       }
-      _applyCookie(request);
-      response = await request.close().timeout(const Duration(seconds: 30));
-    } on TimeoutException {
-      throw const ApiException(0, '连接服务器超时，请检查网络和服务器地址');
-    } on SocketException catch (error) {
-      throw ApiException(0, '无法连接服务器：${error.message}');
-    } on HttpException catch (error) {
-      throw ApiException(0, '网络请求失败：${error.message}');
+      if (attempt + 1 < attempts) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    if (networkError != null) {
+      throw networkError;
     }
 
     _captureCookies(response);

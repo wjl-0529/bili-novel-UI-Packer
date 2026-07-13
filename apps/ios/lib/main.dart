@@ -115,6 +115,33 @@ class _IosShellPageState extends State<IosShellPage> {
       });
     } catch (error) {
       api.close();
+      final defaultUri = normalizeServerUri(remoteServerUri);
+      if (!persist && defaultUri != null && uri != defaultUri) {
+        final fallbackApi = ApiClient(defaultUri);
+        fallbackApi.onUnauthorized = _handleUnauthorized;
+        try {
+          final authenticated = await fallbackApi.checkSession();
+          if (!mounted || !identical(_api, api)) {
+            fallbackApi.close();
+            return;
+          }
+          try {
+            await _saveServerUri(defaultUri);
+          } catch (_) {
+            // A working public server remains usable even if persistence fails.
+          }
+          setState(() {
+            _serverUri = defaultUri;
+            _api = fallbackApi;
+            _authenticated = authenticated;
+            _loading = false;
+            _startupError = null;
+          });
+          return;
+        } catch (_) {
+          fallbackApi.close();
+        }
+      }
       if (mounted && identical(_api, api)) {
         setState(() {
           _loading = false;
@@ -2211,6 +2238,14 @@ class _StartupErrorPageState extends State<StartupErrorPage> {
                         label: const Text('重试'),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _connecting
+                        ? null
+                        : () => widget.onConnect(remoteServerUri),
+                    icon: const Icon(Icons.public),
+                    label: const Text('使用公网服务器'),
                   ),
                 ],
               ),
