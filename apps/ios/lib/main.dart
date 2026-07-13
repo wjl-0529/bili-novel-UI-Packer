@@ -7,7 +7,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-const remoteServerUri = 'https://book.jinhub.cn';
+const remoteServerUri = String.fromEnvironment(
+  'REMOTE_SERVER_URL',
+  defaultValue: 'https://book.jinhub.cn',
+);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,7 +26,8 @@ class NovelPackerIosApp extends StatelessWidget {
       title: '轻小说打包器',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff4f46e5)),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff0f766e)),
+        scaffoldBackgroundColor: const Color(0xffeef2f6),
         useMaterial3: true,
       ),
       home: const IosShellPage(),
@@ -44,6 +48,7 @@ class _IosShellPageState extends State<IosShellPage> {
   WebViewController? _controller;
   Object? _startupError;
   bool _exporting = false;
+  int _loadingProgress = 0;
 
   @override
   void initState() {
@@ -56,6 +61,7 @@ class _IosShellPageState extends State<IosShellPage> {
       setState(() {
         _controller = null;
         _startupError = null;
+        _loadingProgress = 0;
       });
     }
     try {
@@ -71,6 +77,21 @@ class _IosShellPageState extends State<IosShellPage> {
         ..setNavigationDelegate(
           NavigationDelegate(
             onNavigationRequest: (request) => _handleNavigation(request),
+            onPageStarted: (_) {
+              if (mounted) {
+                setState(() => _loadingProgress = 0);
+              }
+            },
+            onProgress: (progress) {
+              if (mounted) {
+                setState(() => _loadingProgress = progress.clamp(0, 100).toInt());
+              }
+            },
+            onPageFinished: (_) {
+              if (mounted) {
+                setState(() => _loadingProgress = 100);
+              }
+            },
             onWebResourceError: (error) {
               if (error.isForMainFrame == true && mounted) {
                 setState(() => _startupError = error.description);
@@ -227,7 +248,19 @@ class _IosShellPageState extends State<IosShellPage> {
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: WebViewWidget(controller: controller),
+        child: Stack(
+          children: [
+            Positioned.fill(child: WebViewWidget(controller: controller)),
+            if (_loadingProgress < 100)
+              Align(
+                alignment: Alignment.topCenter,
+                child: LinearProgressIndicator(
+                  value: _loadingProgress == 0 ? null : _loadingProgress / 100,
+                  minHeight: 2,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

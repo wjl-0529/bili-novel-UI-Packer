@@ -150,6 +150,14 @@ input:focus {
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
 }
 
+button:focus-visible,
+a:focus-visible,
+tbody tr:focus-visible,
+.job-card:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, 0.28);
+  outline-offset: 2px;
+}
+
 .field-hint {
   color: var(--muted);
   font-size: 12px;
@@ -1271,6 +1279,7 @@ td span {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+  user-select: text;
 }
 
 .storage-card p {
@@ -1436,6 +1445,7 @@ td span {
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
+  user-select: text;
 }
 
 .empty-state {

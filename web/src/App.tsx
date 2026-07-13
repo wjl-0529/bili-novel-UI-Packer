@@ -24,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, MouseEvent, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import {
   cancelJob,
   cleanupCompletedJobs,
@@ -610,6 +610,16 @@ export function App() {
   }
 
   async function handleDelete(job: DownloadJob) {
+    const outputHint =
+      job.outputFiles.length > 0
+        ? `，并删除 ${job.outputFiles.length} 个输出文件`
+        : "";
+    const ok = window.confirm(
+      `删除任务 #${job.sourceId}${outputHint}？此操作无法撤销。`,
+    );
+    if (!ok) {
+      return;
+    }
     setNotice("");
     markAction(job.id, true);
     removeJobFromState(job.id);
@@ -2351,7 +2361,13 @@ function JobRow({
   const progress = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
 
   return (
-    <tr className={selected ? "selected-row" : ""} onClick={onSelect}>
+    <tr
+      className={selected ? "selected-row" : ""}
+      tabIndex={0}
+      aria-selected={selected}
+      onClick={onSelect}
+      onKeyDown={(event) => runSelectKey(event, onSelect)}
+    >
       <td className="id-cell">#{job.sourceId}</td>
       <td>
         <strong>{job.title ?? "等待加载"}</strong>
@@ -2381,6 +2397,7 @@ function JobRow({
           {!terminal ? (
             <button
               title="取消任务"
+              aria-label={`取消任务 #${job.sourceId}`}
               disabled={busy || !canCancel}
               onClick={(event) => runRowAction(event, onCancel)}
             >
@@ -2394,6 +2411,7 @@ function JobRow({
           {job.status === "failed" || job.status === "canceled" || job.status === "paused" ? (
             <button
               title={job.status === "paused" ? "重新开始任务" : "重试"}
+              aria-label={`${job.status === "paused" ? "重新开始" : "重试"}任务 #${job.sourceId}`}
               disabled={busy}
               onClick={(event) => runRowAction(event, onRetry)}
             >
@@ -2407,17 +2425,26 @@ function JobRow({
             </button>
           ) : null}
           {job.outputFiles.length === 1 ? (
-            <a title={job.outputFiles[0]} href={fileUrl(job.id, job.outputFiles[0])}>
+            <a
+              title={job.outputFiles[0]}
+              aria-label={`下载 ${job.outputFiles[0]}`}
+              href={fileUrl(job.id, job.outputFiles[0])}
+            >
               <Download size={16} />
             </a>
           ) : null}
           {job.outputFiles.length > 1 ? (
-            <button title="在详情中选择文件" onClick={(event) => runRowAction(event, onSelect)}>
+            <button
+              title="在详情中选择文件"
+              aria-label={`查看任务 #${job.sourceId} 的输出文件`}
+              onClick={(event) => runRowAction(event, onSelect)}
+            >
               <FileText size={16} />
             </button>
           ) : null}
           <button
             title="删除任务"
+            aria-label={`删除任务 #${job.sourceId}`}
             disabled={busy}
             onClick={(event) => runRowAction(event, onDelete)}
           >
@@ -2464,7 +2491,13 @@ function JobCard({
   const progress = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
 
   return (
-    <article className={`job-card ${selected ? "selected" : ""}`} onClick={onSelect}>
+    <article
+      className={`job-card ${selected ? "selected" : ""}`}
+      tabIndex={0}
+      aria-current={selected ? "true" : undefined}
+      onClick={onSelect}
+      onKeyDown={(event) => runSelectKey(event, onSelect)}
+    >
       <div className="job-card-main">
         <span className="id-cell">#{job.sourceId}</span>
         <div>
@@ -2489,6 +2522,7 @@ function JobCard({
         {!terminal ? (
           <button
             title="取消任务"
+            aria-label={`取消任务 #${job.sourceId}`}
             disabled={busy}
             onClick={(event) => runRowAction(event, onCancel)}
           >
@@ -2498,6 +2532,7 @@ function JobCard({
         {job.status === "failed" || job.status === "canceled" || job.status === "paused" ? (
           <button
             title={job.status === "paused" ? "重新开始任务" : "重试"}
+            aria-label={`${job.status === "paused" ? "重新开始" : "重试"}任务 #${job.sourceId}`}
             disabled={busy}
             onClick={(event) => runRowAction(event, onRetry)}
           >
@@ -2511,17 +2546,27 @@ function JobCard({
           </button>
         ) : null}
         {job.outputFiles.length === 1 ? (
-          <a title={job.outputFiles[0]} href={fileUrl(job.id, job.outputFiles[0])} onClick={(event) => event.stopPropagation()}>
+          <a
+            title={job.outputFiles[0]}
+            aria-label={`下载 ${job.outputFiles[0]}`}
+            href={fileUrl(job.id, job.outputFiles[0])}
+            onClick={(event) => event.stopPropagation()}
+          >
             <Download size={16} />
           </a>
         ) : null}
         {job.outputFiles.length > 1 ? (
-          <button title="在详情中选择文件" onClick={(event) => runRowAction(event, onSelect)}>
+          <button
+            title="在详情中选择文件"
+            aria-label={`查看任务 #${job.sourceId} 的输出文件`}
+            onClick={(event) => runRowAction(event, onSelect)}
+          >
             <FileText size={16} />
           </button>
         ) : null}
         <button
           title="删除任务"
+          aria-label={`删除任务 #${job.sourceId}`}
           disabled={busy}
           onClick={(event) => runRowAction(event, onDelete)}
         >
@@ -2535,6 +2580,17 @@ function JobCard({
 function runRowAction(event: MouseEvent, action: () => void | Promise<void>) {
   event.stopPropagation();
   void action();
+}
+
+function runSelectKey(event: KeyboardEvent<HTMLElement>, action: () => void) {
+  if (event.currentTarget !== event.target) {
+    return;
+  }
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  event.preventDefault();
+  action();
 }
 
 function Toggle({
