@@ -57,7 +57,7 @@ class BarkConfigModel {
 
   const BarkConfigModel({
     this.enabled = false,
-    this.serverUrl = 'https://api.day.app',
+    this.serverUrl = '',
     this.deviceKey = '',
     this.events = const BarkEventsModel(),
     this.progressThrottleSeconds = 300,
@@ -127,7 +127,7 @@ class JobRequestModel {
       addChapterTitle: json['addChapterTitle'] == true,
       barkConfig: BarkConfigModel(
         enabled: bark['enabled'] == true,
-        serverUrl: bark['serverUrl']?.toString() ?? 'https://api.day.app',
+        serverUrl: bark['serverUrl']?.toString() ?? '',
         deviceKey: bark['deviceKey']?.toString() ?? '',
         events: BarkEventsModel.fromJson(
           bark['events'] is Map

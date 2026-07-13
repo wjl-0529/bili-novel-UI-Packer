@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'native_models.dart';
 
@@ -264,7 +265,48 @@ class ApiClient {
     return path;
   }
 
-  Future<File> downloadExport(String relativeUrl, String fileName) async {
+  Future<Uint8List> downloadCover(String coverUrl, String referer) async {
+    final uri = baseUri.resolve(coverUrl);
+    final request = await _httpClient
+        .getUrl(uri)
+        .timeout(const Duration(seconds: 30));
+    request.headers.set(
+      HttpHeaders.acceptHeader,
+      'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+    );
+    request.headers.set(
+      HttpHeaders.userAgentHeader,
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) '
+      'AppleWebKit/605.1.15 Mobile/15E148',
+    );
+    if (referer.isNotEmpty) {
+      request.headers.set(HttpHeaders.refererHeader, referer);
+    }
+    if (_isSameOrigin(uri, baseUri)) {
+      _applyCookie(request);
+    }
+    final response = await request.close().timeout(const Duration(minutes: 1));
+    if (response.statusCode == HttpStatus.unauthorized) {
+      onUnauthorized?.call();
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(response.statusCode, '封面下载失败（${response.statusCode}）');
+    }
+    final bytes = BytesBuilder(copy: false);
+    await for (final chunk in response) {
+      bytes.add(chunk);
+      if (bytes.length > 12 * 1024 * 1024) {
+        throw const ApiException(413, '封面文件过大');
+      }
+    }
+    return bytes.takeBytes();
+  }
+
+  Future<File> downloadExport(
+    String relativeUrl,
+    String fileName, {
+    required Directory directory,
+  }) async {
     final uri = baseUri.resolve(relativeUrl);
     final request = await _httpClient
         .getUrl(uri)
@@ -274,10 +316,17 @@ class ApiClient {
     if (response.statusCode != HttpStatus.ok) {
       throw ApiException(response.statusCode, '文件下载失败（${response.statusCode}）');
     }
-    final directory = await Directory.systemTemp.createTemp('bnp-export-');
+    await directory.create(recursive: true);
     final safeName = fileName.replaceAll(RegExp(r'[/\\]'), '_');
     final file = File('${directory.path}/$safeName');
-    await response.pipe(file.openWrite());
+    try {
+      await response.pipe(file.openWrite());
+    } catch (_) {
+      if (await file.exists()) {
+        await file.delete();
+      }
+      rethrow;
+    }
     return file;
   }
 
@@ -299,7 +348,7 @@ class ApiClient {
             .openUrl(method, baseUri.resolve(path))
             .timeout(timeout);
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.51');
+        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.53');
         _applyCookie(request);
         if (body != null) {
           request.headers.contentType = ContentType.json;
@@ -356,6 +405,17 @@ class ApiClient {
     if (cookie != null && cookie.isNotEmpty) {
       request.headers.set(HttpHeaders.cookieHeader, cookie);
     }
+  }
+
+  bool _isSameOrigin(Uri left, Uri right) {
+    int portOf(Uri uri) => uri.hasPort
+        ? uri.port
+        : uri.scheme == 'https'
+        ? 443
+        : 80;
+    return left.scheme == right.scheme &&
+        left.host == right.host &&
+        portOf(left) == portOf(right);
   }
 
   void _captureCookies(HttpClientResponse response) {

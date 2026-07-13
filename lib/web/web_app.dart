@@ -4,7 +4,10 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:bili_novel_packer/light_novel/base/light_novel_model.dart';
+import 'package:bili_novel_packer/light_novel/bili_novel/bili_novel_source.dart';
+import 'package:bili_novel_packer/light_novel/wenku_novel/wenku_novel_source.dart';
 import 'package:bili_novel_packer/novel_packer.dart';
+import 'package:bili_novel_packer/util/http_util.dart';
 import 'package:bili_novel_packer/web/auto_update_config.dart';
 import 'package:bili_novel_packer/web/auto_update_service.dart';
 import 'package:bili_novel_packer/web/cleanup_config.dart';
@@ -40,6 +43,7 @@ class WebApp {
   final DateTime? nativeBootstrapExpiresAt;
   bool _nativeBootstrapConsumed = false;
   final Map<String, _NativeExport> _nativeExports = {};
+  final Map<String, _NovelCover> _novelCovers = {};
   final Random _nativeExportRandom = Random.secure();
 
   WebApp({
@@ -70,6 +74,7 @@ class WebApp {
       ..get("/api/jobs", _jobs)
       ..post("/api/jobs", _createJobs)
       ..post("/api/novel/preview", _previewNovel)
+      ..get("/api/novel/covers/<token>", _downloadNovelCover)
       ..get("/api/webdav/config", _webDavConfig)
       ..put("/api/webdav/config", _saveWebDavConfig)
       ..post("/api/webdav/test", _testWebDavConfig)
@@ -244,6 +249,42 @@ class WebApp {
       return _json({"message": e.message}, status: 400);
     } catch (e) {
       return _json({"message": "搜索失败：$e"}, status: 400);
+    }
+  }
+
+  Future<Response> _downloadNovelCover(Request request, String token) async {
+    _removeExpiredNovelCovers();
+    final cover = _novelCovers[token];
+    if (cover == null || DateTime.now().isAfter(cover.expiresAt)) {
+      return _json({"message": "封面链接已失效"}, status: 404);
+    }
+    try {
+      final pageHost = Uri.tryParse(cover.referer)?.host.toLowerCase() ?? "";
+      final userAgent = pageHost.contains("wenku8")
+          ? WenkuNovelSource.userAgent
+          : BiliNovelSource.userAgent;
+      final upstream = await httpGetResponse(
+        cover.url,
+        headers: {
+          "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+          "Referer": cover.referer,
+          "User-Agent": userAgent,
+        },
+        timeout: const Duration(seconds: 30),
+      );
+      if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+        return _json({"message": "封面下载失败"}, status: 502);
+      }
+      final contentType = upstream.headers["content-type"] ?? "image/jpeg";
+      return Response.ok(
+        upstream.bodyBytes,
+        headers: {
+          "content-type": contentType,
+          "cache-control": "private, max-age=900",
+        },
+      );
+    } catch (_) {
+      return _json({"message": "封面下载失败"}, status: 502);
     }
   }
 
@@ -647,7 +688,7 @@ class WebApp {
       "alias": novel.alias,
       "author": novel.author,
       "status": novel.status,
-      "coverUrl": _normalizeCoverUrl(novel.coverUrl, url),
+      "coverUrl": _registerNovelCover(novel.coverUrl, url),
       "tags": novel.tags ?? [],
       "publisher": novel.publisher,
       "description": novel.description,
@@ -673,6 +714,26 @@ class WebApp {
     }
     return page.resolve(value).toString();
   }
+
+  String? _registerNovelCover(String? coverUrl, String pageUrl) {
+    final normalized = _normalizeCoverUrl(coverUrl, pageUrl);
+    if (normalized == null) {
+      return null;
+    }
+    _removeExpiredNovelCovers();
+    final token = _randomNativeExportToken();
+    _novelCovers[token] = _NovelCover(
+      url: normalized,
+      referer: pageUrl,
+      expiresAt: DateTime.now().add(const Duration(minutes: 30)),
+    );
+    return "/api/novel/covers/$token";
+  }
+
+  void _removeExpiredNovelCovers() {
+    final now = DateTime.now();
+    _novelCovers.removeWhere((_, cover) => now.isAfter(cover.expiresAt));
+  }
 }
 
 class _NativeExport {
@@ -683,6 +744,18 @@ class _NativeExport {
   const _NativeExport({
     required this.jobId,
     required this.fileName,
+    required this.expiresAt,
+  });
+}
+
+class _NovelCover {
+  final String url;
+  final String referer;
+  final DateTime expiresAt;
+
+  const _NovelCover({
+    required this.url,
+    required this.referer,
     required this.expiresAt,
   });
 }

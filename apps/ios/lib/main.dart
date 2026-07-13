@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -10,10 +11,6 @@ import 'api_client.dart';
 import 'biometric_service.dart';
 import 'native_models.dart';
 
-const remoteServerUri = String.fromEnvironment(
-  'REMOTE_SERVER_URL',
-  defaultValue: 'https://book.jinhub.cn',
-);
 const _serverConfigFileName = 'server_url.txt';
 
 void main() {
@@ -95,7 +92,7 @@ class IosShellPage extends StatefulWidget {
 
 class _IosShellPageState extends State<IosShellPage> {
   final BiometricService _biometric = BiometricService();
-  Uri _serverUri = Uri.parse(remoteServerUri);
+  Uri? _serverUri;
   ApiClient? _api;
   Object? _startupError;
   bool _loading = true;
@@ -118,8 +115,19 @@ class _IosShellPageState extends State<IosShellPage> {
       _loading = true;
       _startupError = null;
     });
-    await _loadSavedServerUri();
-    await _connect(_serverUri, persist: false);
+    final savedServerUri = await _loadSavedServerUri();
+    if (!mounted) {
+      return;
+    }
+    if (savedServerUri == null) {
+      setState(() {
+        _loading = false;
+        _serverUri = null;
+        _api = null;
+      });
+      return;
+    }
+    await _connect(savedServerUri, persist: false);
   }
 
   Future<void> _connect(Uri uri, {bool persist = true}) async {
@@ -137,9 +145,6 @@ class _IosShellPageState extends State<IosShellPage> {
     }
     oldApi?.close();
     try {
-      if (persist) {
-        await _saveServerUri(uri);
-      }
       final authenticated = await api.checkSession();
       if (!mounted || !identical(_api, api)) {
         api.close();
@@ -149,35 +154,11 @@ class _IosShellPageState extends State<IosShellPage> {
         _authenticated = authenticated;
         _loading = false;
       });
+      if (persist) {
+        await _saveServerUri(uri);
+      }
     } catch (error) {
       api.close();
-      final defaultUri = normalizeServerUri(remoteServerUri);
-      if (!persist && defaultUri != null && uri != defaultUri) {
-        final fallbackApi = ApiClient(defaultUri);
-        fallbackApi.onUnauthorized = _handleUnauthorized;
-        try {
-          final authenticated = await fallbackApi.checkSession();
-          if (!mounted || !identical(_api, api)) {
-            fallbackApi.close();
-            return;
-          }
-          try {
-            await _saveServerUri(defaultUri);
-          } catch (_) {
-            // A working public server remains usable even if persistence fails.
-          }
-          setState(() {
-            _serverUri = defaultUri;
-            _api = fallbackApi;
-            _authenticated = authenticated;
-            _loading = false;
-            _startupError = null;
-          });
-          return;
-        } catch (_) {
-          fallbackApi.close();
-        }
-      }
       if (mounted && identical(_api, api)) {
         setState(() {
           _loading = false;
@@ -195,18 +176,19 @@ class _IosShellPageState extends State<IosShellPage> {
     await _connect(uri);
   }
 
-  Future<void> _loadSavedServerUri() async {
+  Future<Uri?> _loadSavedServerUri() async {
     try {
       final file = await _serverConfigFile();
       if (await file.exists()) {
         final saved = normalizeServerUri(await file.readAsString());
         if (saved != null) {
-          _serverUri = saved;
+          return saved;
         }
       }
     } catch (_) {
-      // The build-time URL remains the fallback when storage is unavailable.
+      // A missing or unreadable local setting is handled by the setup page.
     }
+    return null;
   }
 
   Future<void> _saveServerUri(Uri uri) async {
@@ -251,10 +233,14 @@ class _IosShellPageState extends State<IosShellPage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final api = _api;
+    final serverUri = _serverUri;
+    if (serverUri == null) {
+      return ServerSetupPage(onConnect: _changeServer);
+    }
     if (_startupError != null || api == null) {
       return StartupErrorPage(
         error: _startupError ?? StateError('服务器未初始化'),
-        serverUrl: _serverUri.toString(),
+        serverUrl: serverUri.toString(),
         onConnect: _changeServer,
         onRetry: () => unawaited(_boot()),
       );
@@ -262,7 +248,7 @@ class _IosShellPageState extends State<IosShellPage> {
     if (!_authenticated) {
       return LoginPage(
         biometric: _biometric,
-        serverUri: _serverUri,
+        serverUri: serverUri,
         onLogin: _login,
         onChangeServer: _showServerDialog,
       );
@@ -270,7 +256,7 @@ class _IosShellPageState extends State<IosShellPage> {
     return NativeHomePage(
       api: api,
       biometric: _biometric,
-      serverUri: _serverUri,
+      serverUri: serverUri,
       onLogout: _logout,
       onChangeServer: _changeServer,
     );
@@ -280,7 +266,7 @@ class _IosShellPageState extends State<IosShellPage> {
     final selected = await showDialog<String>(
       context: context,
       builder: (context) =>
-          ServerAddressDialog(initialValue: _serverUri.toString()),
+          ServerAddressDialog(initialValue: _serverUri?.toString() ?? ''),
     );
     if (selected != null && mounted) {
       try {
@@ -326,6 +312,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _biometricAvailable = false;
   bool _hasBiometricPassword = false;
   bool _rememberBiometric = true;
+  bool _didAttemptAutomaticFaceId = false;
   String? _error;
 
   @override
@@ -349,6 +336,14 @@ class _LoginPageState extends State<LoginPage> {
         _hasBiometricPassword = hasPassword;
         _rememberBiometric = available;
       });
+      if (hasPassword && !_didAttemptAutomaticFaceId) {
+        _didAttemptAutomaticFaceId = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            unawaited(_loginWithFaceId());
+          }
+        });
+      }
     }
   }
 
@@ -540,10 +535,41 @@ class NativeHomePage extends StatefulWidget {
 class _NativeHomePageState extends State<NativeHomePage> {
   int _index = 0;
   final _jobsKey = GlobalKey<_JobsPageState>();
+  late final PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   void _openJobs() {
-    setState(() => _index = 1);
+    _selectTab(1);
     unawaited(_jobsKey.currentState?.refresh());
+  }
+
+  void _selectTab(int index) {
+    if (index < 0 || index > 2) {
+      return;
+    }
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 360),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _onPageChanged(int index) {
+    setState(() => _index = index);
+    if (index == 1) {
+      unawaited(_jobsKey.currentState?.refresh());
+    }
   }
 
   @override
@@ -561,35 +587,181 @@ class _NativeHomePageState extends State<NativeHomePage> {
     ];
     return Scaffold(
       extendBody: true,
-      body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: ClipRect(
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: _onPageChanged,
+        physics: const BouncingScrollPhysics(),
+        children: pages,
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(18, 0, 18, 8),
+        child: GlassBottomNavigationBar(
+          selectedIndex: _index,
+          onSelected: _selectTab,
+        ),
+      ),
+    );
+  }
+}
+
+class GlassBottomNavigationBar extends StatelessWidget {
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  const GlassBottomNavigationBar({
+    required this.selectedIndex,
+    required this.onSelected,
+    super.key,
+  });
+
+  static const _items =
+      <({IconData icon, IconData selectedIcon, String label})>[
+        (
+          icon: Icons.download_outlined,
+          selectedIcon: Icons.download_rounded,
+          label: '下载',
+        ),
+        (
+          icon: Icons.list_alt_outlined,
+          selectedIcon: Icons.list_alt_rounded,
+          label: '任务',
+        ),
+        (
+          icon: Icons.settings_outlined,
+          selectedIcon: Icons.settings_rounded,
+          label: '设置',
+        ),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity < -180 && selectedIndex < _items.length - 1) {
+          onSelected(selectedIndex + 1);
+        } else if (velocity > 180 && selectedIndex > 0) {
+          onSelected(selectedIndex - 1);
+        }
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
         child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: NavigationBar(
-            selectedIndex: _index,
-            onDestinationSelected: (index) {
-              setState(() => _index = index);
-              if (index == 1) {
-                unawaited(_jobsKey.currentState?.refresh());
-              }
-            },
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.download_outlined),
-                selectedIcon: Icon(Icons.download),
-                label: '下载',
+          filter: ui.ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+          child: Container(
+            height: 68,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.54),
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.82),
+                width: 1,
               ),
-              NavigationDestination(
-                icon: Icon(Icons.list_alt_outlined),
-                selectedIcon: Icon(Icons.list_alt),
-                label: '任务',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: '设置',
-              ),
-            ],
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 30,
+                  offset: const Offset(0, 12),
+                ),
+                BoxShadow(
+                  color: Colors.white.withValues(alpha: 0.45),
+                  blurRadius: 2,
+                  offset: const Offset(0, -1),
+                ),
+              ],
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final itemWidth = constraints.maxWidth / _items.length;
+                return Stack(
+                  children: [
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 320),
+                      curve: Curves.easeOutCubic,
+                      left: selectedIndex * itemWidth + 5,
+                      top: 5,
+                      width: itemWidth - 10,
+                      height: 58,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.72),
+                          borderRadius: BorderRadius.circular(23),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.92),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: primary.withValues(alpha: 0.13),
+                              blurRadius: 18,
+                              offset: const Offset(0, 5),
+                            ),
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.07),
+                              blurRadius: 9,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        for (var index = 0; index < _items.length; index++)
+                          Expanded(
+                            child: Semantics(
+                              selected: selectedIndex == index,
+                              button: true,
+                              label: _items[index].label,
+                              child: InkResponse(
+                                onTap: () => onSelected(index),
+                                containedInkWell: true,
+                                highlightShape: BoxShape.rectangle,
+                                child: SizedBox.expand(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      AnimatedSwitcher(
+                                        duration: const Duration(
+                                          milliseconds: 180,
+                                        ),
+                                        child: Icon(
+                                          selectedIndex == index
+                                              ? _items[index].selectedIcon
+                                              : _items[index].icon,
+                                          key: ValueKey(selectedIndex == index),
+                                          size: 23,
+                                          color: selectedIndex == index
+                                              ? primary
+                                              : const Color(0xff5f666b),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _items[index].label,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: selectedIndex == index
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                          color: selectedIndex == index
+                                              ? primary
+                                              : const Color(0xff5f666b),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -628,12 +800,10 @@ class _DownloadPageState extends State<DownloadPage> {
   @override
   void initState() {
     super.initState();
-    _urlController = TextEditingController(
-      text: 'https://www.bilinovel.com/novel/{id}.html',
-    );
-    _rangeController = TextEditingController(text: '1-3');
+    _urlController = TextEditingController();
+    _rangeController = TextEditingController();
     _volumeController = TextEditingController();
-    _barkServerController = TextEditingController(text: 'https://api.day.app');
+    _barkServerController = TextEditingController();
     _barkKeyController = TextEditingController();
     _urlController.addListener(_invalidateStalePreview);
     _rangeController.addListener(_invalidateStalePreview);
@@ -913,6 +1083,7 @@ class _DownloadPageState extends State<DownloadPage> {
           const SizedBox(height: 12),
           if (_previews.isNotEmpty || _previewFailures.isNotEmpty)
             _PreviewResults(
+              api: widget.api,
               previews: _previews,
               failures: _previewFailures,
               selectedIds: _selectedPreviewIds,
@@ -974,6 +1145,7 @@ class _DownloadPageState extends State<DownloadPage> {
 }
 
 class _PreviewResults extends StatelessWidget {
+  final ApiClient api;
   final List<NovelPreviewModel> previews;
   final List<NovelPreviewFailureModel> failures;
   final Set<int> selectedIds;
@@ -982,6 +1154,7 @@ class _PreviewResults extends StatelessWidget {
   final VoidCallback onClear;
 
   const _PreviewResults({
+    required this.api,
     required this.previews,
     required this.failures,
     required this.selectedIds,
@@ -1009,6 +1182,7 @@ class _PreviewResults extends StatelessWidget {
         ),
         for (final preview in previews)
           _PreviewItem(
+            api: api,
             preview: preview,
             selected: selectedIds.contains(preview.sourceId),
             onChanged: (value) => onToggle(preview.sourceId, value),
@@ -1025,19 +1199,69 @@ class _PreviewResults extends StatelessWidget {
   }
 }
 
-class _PreviewItem extends StatelessWidget {
+class _PreviewItem extends StatefulWidget {
+  final ApiClient api;
   final NovelPreviewModel preview;
   final bool selected;
   final ValueChanged<bool> onChanged;
 
   const _PreviewItem({
+    required this.api,
     required this.preview,
     required this.selected,
     required this.onChanged,
   });
 
   @override
+  State<_PreviewItem> createState() => _PreviewItemState();
+}
+
+class _PreviewItemState extends State<_PreviewItem> {
+  Future<Uint8List?>? _coverBytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCover();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PreviewItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.preview.coverUrl != widget.preview.coverUrl ||
+        oldWidget.preview.url != widget.preview.url ||
+        oldWidget.api != widget.api) {
+      _loadCover();
+    }
+  }
+
+  void _loadCover() {
+    final coverUrl = widget.preview.coverUrl;
+    _coverBytes = coverUrl == null || coverUrl.isEmpty
+        ? null
+        : widget.api
+              .downloadCover(coverUrl, widget.preview.url)
+              .then<Uint8List?>((bytes) => bytes)
+              .catchError((_) => null);
+  }
+
+  Widget _coverPlaceholder([bool loading = false]) {
+    return ColoredBox(
+      color: const Color(0xffe8edf0),
+      child: loading
+          ? const Center(
+              child: SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          : const Icon(Icons.menu_book_outlined),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final preview = widget.preview;
     final meta = [
       if (preview.sourceName.isNotEmpty) preview.sourceName,
       if (preview.publisher?.isNotEmpty == true) preview.publisher!,
@@ -1050,8 +1274,8 @@ class _PreviewItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Checkbox(
-            value: selected,
-            onChanged: (value) => onChanged(value == true),
+            value: widget.selected,
+            onChanged: (value) => widget.onChanged(value == true),
           ),
           const SizedBox(width: 6),
           ClipRRect(
@@ -1059,19 +1283,24 @@ class _PreviewItem extends StatelessWidget {
             child: SizedBox(
               width: 62,
               height: 88,
-              child: preview.coverUrl == null
-                  ? const ColoredBox(
-                      color: Color(0xffe8edf0),
-                      child: Icon(Icons.menu_book_outlined),
-                    )
-                  : Image.network(
-                      preview.coverUrl!,
-                      fit: BoxFit.cover,
-                      headers: {'Referer': preview.url},
-                      errorBuilder: (_, _, _) => const ColoredBox(
-                        color: Color(0xffe8edf0),
-                        child: Icon(Icons.menu_book_outlined),
-                      ),
+              child: _coverBytes == null
+                  ? _coverPlaceholder()
+                  : FutureBuilder<Uint8List?>(
+                      future: _coverBytes,
+                      builder: (context, snapshot) {
+                        final bytes = snapshot.data;
+                        if (bytes == null || bytes.isEmpty) {
+                          return _coverPlaceholder(
+                            snapshot.connectionState == ConnectionState.waiting,
+                          );
+                        }
+                        return Image.memory(
+                          bytes,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          errorBuilder: (_, _, _) => _coverPlaceholder(),
+                        );
+                      },
                     ),
             ),
           ),
@@ -1515,16 +1744,23 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
 
   Future<void> _shareFile(String fileName) async {
     setState(() => _busyFile = fileName);
-    File? file;
     try {
       final exportUrl = await widget.api.createNativeExport(
         widget.job.id,
         fileName,
       );
-      file = await widget.api.downloadExport(exportUrl, fileName);
+      final documents = await getApplicationDocumentsDirectory();
+      final file = await widget.api.downloadExport(
+        exportUrl,
+        fileName,
+        directory: documents,
+      );
       if (!mounted) {
         return;
       }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('EPUB 已保存到本机“文件”App，可继续分享或打开')),
+      );
       final box = context.findRenderObject() as RenderBox?;
       final origin = box == null
           ? const Rect.fromLTWH(0, 0, 1, 1)
@@ -1543,15 +1779,6 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
         ).showSnackBar(SnackBar(content: Text('导出失败：$error')));
       }
     } finally {
-      if (file != null) {
-        try {
-          final directory = file.parent;
-          await file.delete();
-          await directory.delete();
-        } catch (_) {
-          // Temporary cleanup is best effort after the share sheet returns.
-        }
-      }
       if (mounted) {
         setState(() => _busyFile = null);
       }
@@ -1687,7 +1914,7 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   trailing: IconButton(
-                    tooltip: '分享文件',
+                    tooltip: '保存或分享文件',
                     onPressed: _busyFile == null
                         ? () => _shareFile(file)
                         : null,
@@ -1696,7 +1923,7 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
                             dimension: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.ios_share),
+                        : const Icon(Icons.download_for_offline_outlined),
                   ),
                 ),
             ],
@@ -2569,6 +2796,121 @@ class _ServerAddressDialogState extends State<ServerAddressDialog> {
   }
 }
 
+class ServerSetupPage extends StatefulWidget {
+  final Future<void> Function(String value) onConnect;
+
+  const ServerSetupPage({required this.onConnect, super.key});
+
+  @override
+  State<ServerSetupPage> createState() => _ServerSetupPageState();
+}
+
+class _ServerSetupPageState extends State<ServerSetupPage> {
+  final TextEditingController _serverController = TextEditingController();
+  String? _validationError;
+  bool _connecting = false;
+
+  @override
+  void dispose() {
+    _serverController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    setState(() {
+      _connecting = true;
+      _validationError = null;
+    });
+    try {
+      await widget.onConnect(_serverController.text);
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _validationError = error.toString().replaceFirst(
+            'FormatException: ',
+            '',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _connecting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: GlassSurface(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Icon(Icons.dns_outlined, size: 48),
+                      const SizedBox(height: 16),
+                      const Text(
+                        '连接你的服务器',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '服务器地址只保存在这台设备上',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 24),
+                      TextField(
+                        controller: _serverController,
+                        enabled: !_connecting,
+                        autofocus: true,
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        decoration: InputDecoration(
+                          labelText: '服务器地址',
+                          hintText: 'https://server.example.com',
+                          errorText: _validationError,
+                          prefixIcon: const Icon(Icons.link),
+                        ),
+                        onSubmitted: (_) => _connect(),
+                      ),
+                      const SizedBox(height: 14),
+                      FilledButton.icon(
+                        onPressed: _connecting ? null : _connect,
+                        icon: _connecting
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.login),
+                        label: const Text('连接'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class StartupErrorPage extends StatefulWidget {
   final Object error;
   final String serverUrl;
@@ -2681,14 +3023,6 @@ class _StartupErrorPageState extends State<StartupErrorPage> {
                         label: const Text('重试'),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: _connecting
-                        ? null
-                        : () => widget.onConnect(remoteServerUri),
-                    icon: const Icon(Icons.public),
-                    label: const Text('使用公网服务器'),
                   ),
                 ],
               ),

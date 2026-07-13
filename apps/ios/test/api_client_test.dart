@@ -60,4 +60,44 @@ void main() {
       }
     },
   );
+
+  test(
+    'downloadExport writes a persistent file to the requested directory',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final subscription = server.listen((request) async {
+        if (request.uri.path == '/api/native/exports/file-token') {
+          request.response.headers.contentType = ContentType(
+            'application',
+            'epub+zip',
+          );
+          request.response.add(utf8.encode('epub-bytes'));
+          await request.response.close();
+          return;
+        }
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      });
+      final client = ApiClient(
+        Uri.parse('http://${server.address.address}:${server.port}'),
+      );
+      final directory = await Directory.systemTemp.createTemp('bnp-documents-');
+
+      try {
+        final file = await client.downloadExport(
+          '/api/native/exports/file-token',
+          'book.epub',
+          directory: directory,
+        );
+        expect(await file.readAsString(), 'epub-bytes');
+        expect(file.parent.path, directory.path);
+        expect(await file.exists(), isTrue);
+      } finally {
+        client.close();
+        await subscription.cancel();
+        await server.close(force: true);
+        await directory.delete(recursive: true);
+      }
+    },
+  );
 }

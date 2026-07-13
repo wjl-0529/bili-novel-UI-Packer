@@ -94,7 +94,7 @@ const barkStorageKey = "bili-novel-packer:bark-config";
 
 const defaultBark: BarkConfig = {
   enabled: false,
-  serverUrl: "https://api.day.app",
+  serverUrl: "",
   deviceKey: "",
   events: {
     start: false,
@@ -127,8 +127,8 @@ const defaultAutoUpdateConfig: AutoUpdateConfig = {
 };
 
 const defaultRequest: JobRequest = {
-  urlTemplate: "https://www.bilinovel.com/novel/{id}.html",
-  rangeText: "1-3",
+  urlTemplate: "",
+  rangeText: "",
   volumeRangeText: "",
   combineVolume: false,
   addChapterTitle: false,

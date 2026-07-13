@@ -56,7 +56,7 @@ class BarkConfig {
 
   const BarkConfig({
     this.enabled = false,
-    this.serverUrl = "https://api.day.app",
+    this.serverUrl = "",
     this.deviceKey = "",
     this.events = const BarkEvents(),
     this.progressThrottleSeconds = 300,
@@ -68,9 +68,7 @@ class BarkConfig {
     }
     return BarkConfig(
       enabled: json["enabled"] == true,
-      serverUrl: (json["serverUrl"] as String?)?.trim().isNotEmpty == true
-          ? (json["serverUrl"] as String).trim()
-          : "https://api.day.app",
+      serverUrl: (json["serverUrl"] as String?)?.trim() ?? "",
       deviceKey: (json["deviceKey"] as String?)?.trim() ?? "",
       events: BarkEvents.fromJson(json["events"] as Map<String, dynamic>?),
       progressThrottleSeconds:

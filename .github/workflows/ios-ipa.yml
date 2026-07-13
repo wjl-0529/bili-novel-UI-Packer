@@ -18,9 +18,8 @@ jobs:
     timeout-minutes: 45
     env:
       FLUTTER_VERSION: 3.44.3
-      APP_VERSION: 0.2.51
-      BUNDLE_ID: com.wjl0529.bilinovelpacker
-      REMOTE_SERVER_URL: ${{ vars.IOS_REMOTE_SERVER_URL || 'https://book.jinhub.cn' }}
+      APP_VERSION: 0.2.53
+      BUNDLE_ID: com.bilinovelpacker.ios
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,7 +61,7 @@ jobs:
       - name: Generate iOS Runner project
         working-directory: apps/ios
         run: |
-          flutter create --platforms=ios --org com.wjl0529 \
+          flutter create --platforms=ios --org com.bilinovelpacker \
             --project-name bili_novel_packer_ios "$RUNNER_TEMP/bnp_ios_runner"
           cp -R "$RUNNER_TEMP/bnp_ios_runner/ios" ./ios
           ruby <<'RUBY'
@@ -88,6 +87,8 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" ios/Runner/Info.plist || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" ios/Runner/Info.plist
 
       - name: Verify Flutter app
         working-directory: apps/ios
@@ -101,8 +102,7 @@ jobs:
         run: |
           flutter build ios --release --no-codesign \
             --build-name "$APP_VERSION" \
-            --build-number "$GITHUB_RUN_NUMBER" \
-            --dart-define=REMOTE_SERVER_URL="$REMOTE_SERVER_URL"
+            --build-number "$GITHUB_RUN_NUMBER"
           APP_PATH="build/ios/iphoneos/Runner.app"
           test -d "$APP_PATH"
           file "$APP_PATH/Runner" | grep -q arm64
