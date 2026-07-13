@@ -3,6 +3,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('normalizes supported server origins', () {
+    expect(
+      normalizeServerUri(' http://192.168.31.56:8080/path?q=1 '),
+      Uri.parse('http://192.168.31.56:8080'),
+    );
+    expect(
+      normalizeServerUri('https://book.jinhub.cn'),
+      Uri.parse(remoteServerUri),
+    );
+    expect(normalizeServerUri('ftp://example.com'), isNull);
+    expect(normalizeServerUri('https://user@example.com'), isNull);
+  });
+
   test('recognizes only output URLs from the configured server', () {
     final server = Uri.parse(remoteServerUri);
     expect(
@@ -27,10 +40,13 @@ void main() {
 
   testWidgets('startup failure exposes a working retry action', (tester) async {
     var retried = false;
+    String? connectedUrl;
     await tester.pumpWidget(
       MaterialApp(
         home: StartupErrorPage(
           error: StateError('boom'),
+          serverUrl: remoteServerUri,
+          onConnect: (value) async => connectedUrl = value,
           onRetry: () => retried = true,
         ),
       ),
@@ -40,5 +56,10 @@ void main() {
     expect(find.text('重试'), findsOneWidget);
     await tester.tap(find.text('重试'));
     expect(retried, isTrue);
+
+    await tester.enterText(find.byType(TextField), 'http://192.168.31.56:8080');
+    await tester.tap(find.text('连接'));
+    await tester.pump();
+    expect(connectedUrl, 'http://192.168.31.56:8080');
   });
 }

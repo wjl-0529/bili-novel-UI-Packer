@@ -11,6 +11,7 @@ const remoteServerUri = String.fromEnvironment(
   'REMOTE_SERVER_URL',
   defaultValue: 'https://book.jinhub.cn',
 );
+const _serverConfigFileName = 'server_url.txt';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -43,11 +44,12 @@ class IosShellPage extends StatefulWidget {
 }
 
 class _IosShellPageState extends State<IosShellPage> {
-  static final Uri _serverUri = Uri.parse(remoteServerUri);
+  Uri _serverUri = Uri.parse(remoteServerUri);
 
   WebViewController? _controller;
   Object? _startupError;
   bool _exporting = false;
+  bool _serverPreferenceLoaded = false;
   int _loadingProgress = 0;
 
   @override
@@ -57,6 +59,10 @@ class _IosShellPageState extends State<IosShellPage> {
   }
 
   Future<void> _start() async {
+    if (!_serverPreferenceLoaded) {
+      await _loadSavedServerUri();
+      _serverPreferenceLoaded = true;
+    }
     if (mounted) {
       setState(() {
         _controller = null;
@@ -84,7 +90,9 @@ class _IosShellPageState extends State<IosShellPage> {
             },
             onProgress: (progress) {
               if (mounted) {
-                setState(() => _loadingProgress = progress.clamp(0, 100).toInt());
+                setState(
+                  () => _loadingProgress = progress.clamp(0, 100).toInt(),
+                );
               }
             },
             onPageFinished: (_) {
@@ -109,6 +117,38 @@ class _IosShellPageState extends State<IosShellPage> {
         setState(() => _startupError = error);
       }
     }
+  }
+
+  Future<void> _loadSavedServerUri() async {
+    try {
+      final file = await _serverConfigFile();
+      if (!await file.exists()) {
+        return;
+      }
+      final saved = normalizeServerUri(await file.readAsString());
+      if (saved != null) {
+        _serverUri = saved;
+      }
+    } catch (_) {
+      // Keep the build-time default when the preference cannot be read.
+    }
+  }
+
+  Future<void> _changeServer(String value) async {
+    final next = normalizeServerUri(value);
+    if (next == null) {
+      throw const FormatException('请输入有效的 HTTP 或 HTTPS 地址');
+    }
+    final file = await _serverConfigFile();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(next.toString(), flush: true);
+    _serverUri = next;
+    await _start();
+  }
+
+  Future<File> _serverConfigFile() async {
+    final directory = await getApplicationSupportDirectory();
+    return File('${directory.path}/$_serverConfigFileName');
   }
 
   FutureOr<NavigationDecision> _handleNavigation(NavigationRequest request) {
@@ -239,7 +279,12 @@ class _IosShellPageState extends State<IosShellPage> {
   @override
   Widget build(BuildContext context) {
     if (_startupError != null) {
-      return StartupErrorPage(error: _startupError!, onRetry: _start);
+      return StartupErrorPage(
+        error: _startupError!,
+        serverUrl: _serverUri.toString(),
+        onConnect: _changeServer,
+        onRetry: _start,
+      );
     }
     final controller = _controller;
     if (controller == null) {
@@ -264,6 +309,18 @@ class _IosShellPageState extends State<IosShellPage> {
       ),
     );
   }
+}
+
+Uri? normalizeServerUri(String value) {
+  final uri = Uri.tryParse(value.trim());
+  if (uri == null ||
+      !uri.hasScheme ||
+      (uri.scheme != 'http' && uri.scheme != 'https') ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  return uri.replace(path: '', query: null, fragment: null);
 }
 
 bool isRemoteOutputUri(Uri serverUri, Uri candidate) {
@@ -291,38 +348,122 @@ bool isRemoteOutputUri(Uri serverUri, Uri candidate) {
       segments[4].isNotEmpty;
 }
 
-class StartupErrorPage extends StatelessWidget {
+class StartupErrorPage extends StatefulWidget {
   final Object error;
+  final String serverUrl;
+  final Future<void> Function(String value) onConnect;
   final VoidCallback onRetry;
 
   const StartupErrorPage({
     required this.error,
+    required this.serverUrl,
+    required this.onConnect,
     required this.onRetry,
     super.key,
   });
 
   @override
+  State<StartupErrorPage> createState() => _StartupErrorPageState();
+}
+
+class _StartupErrorPageState extends State<StartupErrorPage> {
+  late final TextEditingController _serverController;
+  String? _validationError;
+  bool _connecting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _serverController = TextEditingController(text: widget.serverUrl);
+  }
+
+  @override
+  void dispose() {
+    _serverController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    setState(() {
+      _connecting = true;
+      _validationError = null;
+    });
+    try {
+      await widget.onConnect(_serverController.text);
+    } catch (error) {
+      if (mounted) {
+        setState(
+          () => _validationError = error.toString().replaceFirst(
+            'FormatException: ',
+            '',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _connecting = false);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.cloud_off_outlined, size: 48),
-                const SizedBox(height: 16),
-                const Text('无法连接服务器', style: TextStyle(fontSize: 20)),
-                const SizedBox(height: 8),
-                Text('$error', textAlign: TextAlign.center),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('重试'),
-                ),
-              ],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 48),
+                  const SizedBox(height: 16),
+                  const Text('无法连接服务器', style: TextStyle(fontSize: 20)),
+                  const SizedBox(height: 8),
+                  Text('${widget.error}', textAlign: TextAlign.center),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _serverController,
+                    enabled: !_connecting,
+                    keyboardType: TextInputType.url,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    decoration: InputDecoration(
+                      labelText: '服务器地址',
+                      errorText: _validationError,
+                      border: const OutlineInputBorder(),
+                    ),
+                    onSubmitted: (_) => _connect(),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _connecting ? null : _connect,
+                          icon: _connecting
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.link),
+                          label: const Text('连接'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        onPressed: _connecting ? null : widget.onRetry,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重试'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
