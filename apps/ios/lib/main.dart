@@ -12,6 +12,7 @@ import 'biometric_service.dart';
 import 'native_models.dart';
 
 const _serverConfigFileName = 'server_url.txt';
+const _manualLoginFlagFileName = 'manual_login_completed.txt';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -97,6 +98,7 @@ class _IosShellPageState extends State<IosShellPage> {
   Object? _startupError;
   bool _loading = true;
   bool _authenticated = false;
+  bool _manualLoginCompleted = false;
 
   @override
   void initState() {
@@ -116,6 +118,7 @@ class _IosShellPageState extends State<IosShellPage> {
       _startupError = null;
     });
     final savedServerUri = await _loadSavedServerUri();
+    final manualLoginCompleted = await _loadManualLoginCompleted();
     if (!mounted) {
       return;
     }
@@ -124,13 +127,19 @@ class _IosShellPageState extends State<IosShellPage> {
         _loading = false;
         _serverUri = null;
         _api = null;
+        _manualLoginCompleted = manualLoginCompleted;
       });
       return;
     }
+    _manualLoginCompleted = manualLoginCompleted;
     await _connect(savedServerUri, persist: false);
   }
 
-  Future<void> _connect(Uri uri, {bool persist = true}) async {
+  Future<void> _connect(
+    Uri uri, {
+    bool persist = true,
+    bool resetLoginState = false,
+  }) async {
     final oldApi = _api;
     final api = ApiClient(uri);
     api.onUnauthorized = _handleUnauthorized;
@@ -150,13 +159,28 @@ class _IosShellPageState extends State<IosShellPage> {
         api.close();
         return;
       }
-      setState(() {
-        _authenticated = authenticated;
-        _loading = false;
-      });
       if (persist) {
         await _saveServerUri(uri);
       }
+      var nextAuthenticated = authenticated;
+      if (resetLoginState) {
+        try {
+          await _biometric.clearPassword();
+          await _clearManualLoginCompleted();
+        } catch (_) {
+          // The server remains usable even if local credential cleanup fails.
+        }
+        _manualLoginCompleted = false;
+        nextAuthenticated = false;
+      }
+      if (!mounted || !identical(_api, api)) {
+        api.close();
+        return;
+      }
+      setState(() {
+        _authenticated = nextAuthenticated;
+        _loading = false;
+      });
     } catch (error) {
       api.close();
       if (mounted && identical(_api, api)) {
@@ -173,7 +197,7 @@ class _IosShellPageState extends State<IosShellPage> {
     if (uri == null) {
       throw const FormatException('请输入有效的 HTTP 或 HTTPS 地址');
     }
-    await _connect(uri);
+    await _connect(uri, resetLoginState: uri != _serverUri);
   }
 
   Future<Uri?> _loadSavedServerUri() async {
@@ -202,6 +226,32 @@ class _IosShellPageState extends State<IosShellPage> {
     return File('${directory.path}/$_serverConfigFileName');
   }
 
+  Future<bool> _loadManualLoginCompleted() async {
+    try {
+      final directory = await getApplicationSupportDirectory();
+      final file = File('${directory.path}/$_manualLoginFlagFileName');
+      return await file.exists() &&
+          (await file.readAsString()).trim() == 'true';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _saveManualLoginCompleted() async {
+    final directory = await getApplicationSupportDirectory();
+    final file = File('${directory.path}/$_manualLoginFlagFileName');
+    await file.parent.create(recursive: true);
+    await file.writeAsString('true', flush: true);
+  }
+
+  Future<void> _clearManualLoginCompleted() async {
+    final directory = await getApplicationSupportDirectory();
+    final file = File('${directory.path}/$_manualLoginFlagFileName');
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+
   void _handleUnauthorized() {
     if (!mounted) {
       return;
@@ -215,6 +265,12 @@ class _IosShellPageState extends State<IosShellPage> {
       return;
     }
     await api.login(password);
+    try {
+      await _saveManualLoginCompleted();
+      _manualLoginCompleted = true;
+    } catch (_) {
+      // Login succeeds even if the local first-login marker cannot be saved.
+    }
     if (mounted) {
       setState(() => _authenticated = true);
     }
@@ -222,8 +278,17 @@ class _IosShellPageState extends State<IosShellPage> {
 
   Future<void> _logout() async {
     await _api?.logout();
+    try {
+      await _biometric.clearPassword();
+      await _clearManualLoginCompleted();
+    } catch (_) {
+      // The remote logout remains valid if local credential cleanup fails.
+    }
     if (mounted) {
-      setState(() => _authenticated = false);
+      setState(() {
+        _authenticated = false;
+        _manualLoginCompleted = false;
+      });
     }
   }
 
@@ -248,6 +313,7 @@ class _IosShellPageState extends State<IosShellPage> {
     if (!_authenticated) {
       return LoginPage(
         biometric: _biometric,
+        allowBiometricLogin: _manualLoginCompleted,
         serverUri: serverUri,
         onLogin: _login,
         onChangeServer: _showServerDialog,
@@ -289,12 +355,14 @@ class _IosShellPageState extends State<IosShellPage> {
 
 class LoginPage extends StatefulWidget {
   final BiometricService biometric;
+  final bool allowBiometricLogin;
   final Uri serverUri;
   final Future<void> Function(String password) onLogin;
   final Future<void> Function() onChangeServer;
 
   const LoginPage({
     required this.biometric,
+    this.allowBiometricLogin = false,
     required this.serverUri,
     required this.onLogin,
     required this.onChangeServer,
@@ -311,7 +379,6 @@ class _LoginPageState extends State<LoginPage> {
   bool _biometricBusy = false;
   bool _biometricAvailable = false;
   bool _hasBiometricPassword = false;
-  bool _rememberBiometric = true;
   bool _didAttemptAutomaticFaceId = false;
   String? _error;
 
@@ -328,13 +395,15 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _loadBiometricState() async {
+    if (!widget.allowBiometricLogin) {
+      return;
+    }
     final available = await widget.biometric.isAvailable();
     final hasPassword = available && await widget.biometric.hasSavedPassword();
     if (mounted) {
       setState(() {
         _biometricAvailable = available;
         _hasBiometricPassword = hasPassword;
-        _rememberBiometric = available;
       });
       if (hasPassword && !_didAttemptAutomaticFaceId) {
         _didAttemptAutomaticFaceId = true;
@@ -359,14 +428,6 @@ class _LoginPageState extends State<LoginPage> {
     final password = _passwordController.text;
     try {
       await widget.onLogin(password);
-      if (_biometricAvailable && _rememberBiometric) {
-        try {
-          await widget.biometric.savePassword(password);
-          _hasBiometricPassword = true;
-        } catch (_) {
-          // Password login remains successful when Keychain is unavailable.
-        }
-      }
     } catch (error) {
       if (mounted) {
         setState(() => _error = error.toString());
@@ -468,17 +529,9 @@ class _LoginPageState extends State<LoginPage> {
                             : const Icon(Icons.login),
                         label: const Text('登录'),
                       ),
-                      if (_biometricAvailable && !_hasBiometricPassword)
-                        SwitchListTile.adaptive(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('启用 Face ID 快速登录'),
-                          value: _rememberBiometric,
-                          onChanged: _busy || _biometricBusy
-                              ? null
-                              : (value) =>
-                                    setState(() => _rememberBiometric = value),
-                        ),
-                      if (_biometricAvailable && _hasBiometricPassword)
+                      if (widget.allowBiometricLogin &&
+                          _biometricAvailable &&
+                          _hasBiometricPassword)
                         OutlinedButton.icon(
                           onPressed: _busy || _biometricBusy
                               ? null
@@ -800,7 +853,9 @@ class _DownloadPageState extends State<DownloadPage> {
   @override
   void initState() {
     super.initState();
-    _urlController = TextEditingController();
+    _urlController = TextEditingController(
+      text: 'https://www.bilinovel.com/novel/{id}.html',
+    );
     _rangeController = TextEditingController();
     _volumeController = TextEditingController();
     _barkServerController = TextEditingController();
@@ -1740,34 +1795,61 @@ class JobDetailSheet extends StatefulWidget {
 
 class _JobDetailSheetState extends State<JobDetailSheet> {
   String? _busyFile;
+  int? _downloadPercent;
   bool _cleaningOutputs = false;
 
-  Future<void> _shareFile(String fileName) async {
-    setState(() => _busyFile = fileName);
+  Future<void> _saveFile(String fileName, {bool share = false}) async {
+    setState(() {
+      _busyFile = fileName;
+      _downloadPercent = 0;
+    });
     try {
-      final exportUrl = await widget.api.createNativeExport(
-        widget.job.id,
-        fileName,
-      );
       final documents = await getApplicationDocumentsDirectory();
-      final file = await widget.api.downloadExport(
-        exportUrl,
+      final support = await getApplicationSupportDirectory();
+      final outputUrl =
+          '/api/jobs/${Uri.encodeComponent(widget.job.id)}/files/'
+          '${Uri.encodeComponent(fileName)}';
+      final cacheKey = [
+        widget.job.id,
+        widget.job.finishedAt?.toUtc().toIso8601String() ?? '',
+        fileName,
+      ].join('|');
+      var lastPercent = -1;
+      final result = await widget.api.downloadExport(
+        outputUrl,
         fileName,
         directory: documents,
+        cacheDirectory: Directory('${support.path}/export-cache'),
+        cacheKey: cacheKey,
+        onProgress: (received, total) {
+          final percent = total == null || total == 0
+              ? null
+              : (received * 100 / total).clamp(0, 100).round();
+          if (!mounted || percent == lastPercent) {
+            return;
+          }
+          lastPercent = percent ?? -1;
+          setState(() => _downloadPercent = percent);
+        },
       );
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('EPUB 已保存到本机“文件”App，可继续分享或打开')),
+        SnackBar(
+          content: Text(result.reused ? '文件已在本机，无需重复下载' : 'EPUB 已保存到本机“文件”App'),
+        ),
       );
+      if (!share) {
+        return;
+      }
       final box = context.findRenderObject() as RenderBox?;
       final origin = box == null
           ? const Rect.fromLTWH(0, 0, 1, 1)
           : box.localToGlobal(Offset.zero) & box.size;
       await SharePlus.instance.share(
         ShareParams(
-          files: [XFile(file.path, mimeType: 'application/epub+zip')],
+          files: [XFile(result.file.path, mimeType: 'application/epub+zip')],
           subject: fileName,
           sharePositionOrigin: origin,
         ),
@@ -1780,7 +1862,10 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
       }
     } finally {
       if (mounted) {
-        setState(() => _busyFile = null);
+        setState(() {
+          _busyFile = null;
+          _downloadPercent = null;
+        });
       }
     }
   }
@@ -1913,17 +1998,37 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  trailing: IconButton(
-                    tooltip: '保存或分享文件',
-                    onPressed: _busyFile == null
-                        ? () => _shareFile(file)
-                        : null,
-                    icon: _busyFile == file
-                        ? const SizedBox.square(
-                            dimension: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.download_for_offline_outlined),
+                  trailing: SizedBox(
+                    width: 88,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        IconButton(
+                          tooltip: '保存到本机',
+                          onPressed: _busyFile == null
+                              ? () => _saveFile(file)
+                              : null,
+                          icon: _busyFile == file
+                              ? SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    value: _downloadPercent == null
+                                        ? null
+                                        : _downloadPercent! / 100,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.download_for_offline_outlined),
+                        ),
+                        IconButton(
+                          tooltip: '分享文件',
+                          onPressed: _busyFile == null
+                              ? () => _saveFile(file, share: true)
+                              : null,
+                          icon: const Icon(Icons.ios_share),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
             ],

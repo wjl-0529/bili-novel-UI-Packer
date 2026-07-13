@@ -111,7 +111,7 @@ const defaultWebDavConfig: WebDavConfig = {
   serverUrl: "",
   username: "",
   password: "",
-  basePath: "/小说/轻小说打包器",
+  basePath: "",
   hasPassword: false,
 };
 
@@ -127,7 +127,7 @@ const defaultAutoUpdateConfig: AutoUpdateConfig = {
 };
 
 const defaultRequest: JobRequest = {
-  urlTemplate: "",
+  urlTemplate: "https://www.bilinovel.com/novel/{id}.html",
   rangeText: "",
   volumeRangeText: "",
   combineVolume: false,
@@ -1958,7 +1958,7 @@ function WebDavPanel({
           <input
             value={config.basePath}
             onChange={(event) => updateConfig({ basePath: event.target.value })}
-            placeholder="/小说/轻小说打包器"
+            placeholder="可选"
           />
         </label>
         <div className="webdav-actions">

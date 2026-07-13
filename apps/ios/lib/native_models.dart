@@ -237,7 +237,7 @@ class WebDavConfigModel {
     this.serverUrl = '',
     this.username = '',
     this.password = '',
-    this.basePath = '/小说/轻小说打包器',
+    this.basePath = '',
     this.hasPassword = false,
   });
 
@@ -247,7 +247,7 @@ class WebDavConfigModel {
       serverUrl: json?['serverUrl']?.toString() ?? '',
       username: json?['username']?.toString() ?? '',
       password: '',
-      basePath: json?['basePath']?.toString() ?? '/小说/轻小说打包器',
+      basePath: json?['basePath']?.toString() ?? '',
       hasPassword: json?['hasPassword'] == true,
     );
   }

@@ -302,11 +302,35 @@ class ApiClient {
     return bytes.takeBytes();
   }
 
-  Future<File> downloadExport(
+  Future<({File file, bool reused})> downloadExport(
     String relativeUrl,
     String fileName, {
     required Directory directory,
+    required Directory cacheDirectory,
+    required String cacheKey,
+    void Function(int received, int? total)? onProgress,
   }) async {
+    await directory.create(recursive: true);
+    await cacheDirectory.create(recursive: true);
+    final safeName = fileName.replaceAll(RegExp(r'[/\\]'), '_');
+    final file = File('${directory.path}/$safeName');
+    final markerName = safeName.length > 80
+        ? safeName.substring(safeName.length - 80)
+        : safeName;
+    final cacheMarker = File('${cacheDirectory.path}/$markerName.export-cache');
+    try {
+      if (await file.exists() && await cacheMarker.exists()) {
+        final savedKey = await cacheMarker.readAsString();
+        final length = await file.length();
+        if (savedKey == cacheKey && length > 0) {
+          onProgress?.call(length, length);
+          return (file: file, reused: true);
+        }
+      }
+    } catch (_) {
+      // A stale cache marker must never block a fresh download.
+    }
+
     final uri = baseUri.resolve(relativeUrl);
     final request = await _httpClient
         .getUrl(uri)
@@ -316,18 +340,37 @@ class ApiClient {
     if (response.statusCode != HttpStatus.ok) {
       throw ApiException(response.statusCode, '文件下载失败（${response.statusCode}）');
     }
-    await directory.create(recursive: true);
-    final safeName = fileName.replaceAll(RegExp(r'[/\\]'), '_');
-    final file = File('${directory.path}/$safeName');
+    final total = response.contentLength >= 0 ? response.contentLength : null;
+    final partialFile = File('${directory.path}/.$safeName.part');
+    IOSink? sink;
     try {
-      await response.pipe(file.openWrite());
-    } catch (_) {
+      sink = partialFile.openWrite();
+      var received = 0;
+      await for (final chunk in response) {
+        sink.add(chunk);
+        received += chunk.length;
+        onProgress?.call(received, total);
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
       if (await file.exists()) {
         await file.delete();
       }
+      await partialFile.rename(file.path);
+      try {
+        await cacheMarker.writeAsString(cacheKey, flush: true);
+      } catch (_) {
+        // Caching is an optimization; the downloaded file is still valid.
+      }
+    } catch (_) {
+      await sink?.close();
+      if (await partialFile.exists()) {
+        await partialFile.delete();
+      }
       rethrow;
     }
-    return file;
+    return (file: file, reused: false);
   }
 
   void close() => _httpClient.close(force: true);
@@ -348,7 +391,7 @@ class ApiClient {
             .openUrl(method, baseUri.resolve(path))
             .timeout(timeout);
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.53');
+        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.54');
         _applyCookie(request);
         if (body != null) {
           request.headers.contentType = ContentType.json;

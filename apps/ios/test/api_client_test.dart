@@ -65,8 +65,10 @@ void main() {
     'downloadExport writes a persistent file to the requested directory',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var downloadRequests = 0;
       final subscription = server.listen((request) async {
         if (request.uri.path == '/api/native/exports/file-token') {
+          downloadRequests++;
           request.response.headers.contentType = ContentType(
             'application',
             'epub+zip',
@@ -82,21 +84,37 @@ void main() {
         Uri.parse('http://${server.address.address}:${server.port}'),
       );
       final directory = await Directory.systemTemp.createTemp('bnp-documents-');
+      final cacheDirectory = await Directory.systemTemp.createTemp(
+        'bnp-export-cache-',
+      );
 
       try {
-        final file = await client.downloadExport(
+        final first = await client.downloadExport(
           '/api/native/exports/file-token',
           'book.epub',
           directory: directory,
+          cacheDirectory: cacheDirectory,
+          cacheKey: 'job-1|finished|book.epub',
         );
-        expect(await file.readAsString(), 'epub-bytes');
-        expect(file.parent.path, directory.path);
-        expect(await file.exists(), isTrue);
+        final second = await client.downloadExport(
+          '/api/native/exports/file-token',
+          'book.epub',
+          directory: directory,
+          cacheDirectory: cacheDirectory,
+          cacheKey: 'job-1|finished|book.epub',
+        );
+        expect(await first.file.readAsString(), 'epub-bytes');
+        expect(first.file.parent.path, directory.path);
+        expect(await first.file.exists(), isTrue);
+        expect(first.reused, isFalse);
+        expect(second.reused, isTrue);
+        expect(downloadRequests, 1);
       } finally {
         client.close();
         await subscription.cancel();
         await server.close(force: true);
         await directory.delete(recursive: true);
+        await cacheDirectory.delete(recursive: true);
       }
     },
   );

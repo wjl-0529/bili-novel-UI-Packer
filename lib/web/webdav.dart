@@ -16,7 +16,7 @@ class WebDavConfig {
     this.serverUrl = "",
     this.username = "",
     this.password = "",
-    this.basePath = "/小说/轻小说打包器",
+    this.basePath = "",
   });
 
   bool get hasPassword => password.isNotEmpty;
@@ -37,7 +37,7 @@ class WebDavConfig {
       username: (json["username"] as String?)?.trim() ?? "",
       password: (json["password"] as String?) ?? "",
       basePath: _normalizeBasePath(
-        (json["basePath"] as String?)?.trim() ?? "/小说/轻小说打包器",
+        (json["basePath"] as String?)?.trim() ?? "",
       ),
     );
   }
@@ -325,7 +325,7 @@ String _sanitizeSegment(String value) {
 String _normalizeBasePath(String value) {
   final segments = _splitRemotePath(value);
   if (segments.isEmpty) {
-    return "/小说/轻小说打包器";
+    return "";
   }
   return _displayPath(segments);
 }

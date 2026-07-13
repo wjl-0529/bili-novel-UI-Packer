@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 45
     env:
       FLUTTER_VERSION: 3.44.3
-      APP_VERSION: 0.2.53
+      APP_VERSION: 0.2.54
       BUNDLE_ID: com.bilinovelpacker.ios
     steps:
       - name: Checkout

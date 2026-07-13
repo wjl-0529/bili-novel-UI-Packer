@@ -10,6 +10,14 @@ import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 
 void main() {
+  test("default WebDAV fields are empty", () {
+    const config = WebDavConfig();
+    expect(config.serverUrl, isEmpty);
+    expect(config.username, isEmpty);
+    expect(config.password, isEmpty);
+    expect(config.basePath, isEmpty);
+  });
+
   test("config store keeps, redacts, and clears password", () async {
     final dir = await Directory.systemTemp.createTemp("bnp_webdav_config_");
     addTearDown(() => dir.delete(recursive: true));
@@ -50,51 +58,54 @@ void main() {
     expect(cleared.toSafeJson()["hasPassword"], isFalse);
   });
 
-  test("client creates directories and uploads files with basic auth",
-      () async {
-    final dir = await Directory.systemTemp.createTemp("bnp_webdav_upload_");
-    addTearDown(() => dir.delete(recursive: true));
-    final file = File(path.join(dir.path, "book.epub"));
-    await file.writeAsString("epub");
-    final seen = <String>[];
-    final client = WebDavClient(
-      client: MockClient((request) async {
-        expect(
-          request.headers["authorization"],
-          "Basic ${base64Encode(utf8.encode("user:secret"))}",
-        );
-        seen.add("${request.method} ${request.url.pathSegments.join("/")}");
-        if (request.method == "PUT") {
-          expect(request.bodyBytes, utf8.encode("epub"));
-          return http.Response("", 204);
-        }
-        return http.Response("", 201);
-      }),
-    );
+  test(
+    "client creates directories and uploads files with basic auth",
+    () async {
+      final dir = await Directory.systemTemp.createTemp("bnp_webdav_upload_");
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File(path.join(dir.path, "book.epub"));
+      await file.writeAsString("epub");
+      final seen = <String>[];
+      final client = WebDavClient(
+        client: MockClient((request) async {
+          expect(
+            request.headers["authorization"],
+            "Basic ${base64Encode(utf8.encode("user:secret"))}",
+          );
+          seen.add("${request.method} ${request.url.pathSegments.join("/")}");
+          if (request.method == "PUT") {
+            expect(request.bodyBytes, utf8.encode("epub"));
+            return http.Response("", 204);
+          }
+          return http.Response("", 201);
+        }),
+      );
 
-    final result = await client.uploadFiles(
-      config: const WebDavConfig(
-        enabled: true,
-        serverUrl: "https://dav.example.com/dav",
-        username: "user",
-        password: "secret",
-        basePath: "/Books/Light Novels",
-      ),
-      sourceId: 42,
-      title: "A/B",
-      jobId: "abcd1234-zzzz",
-      files: [file],
-    );
+      final result = await client.uploadFiles(
+        config: const WebDavConfig(
+          enabled: true,
+          serverUrl: "https://dav.example.com/dav",
+          username: "user",
+          password: "secret",
+          basePath: "/Books/Light Novels",
+        ),
+        sourceId: 42,
+        title: "A/B",
+        jobId: "abcd1234-zzzz",
+        files: [file],
+      );
 
-    expect(seen, [
-      "MKCOL dav/Books",
-      "MKCOL dav/Books/Light Novels",
-      "MKCOL dav/Books/Light Novels/42-A_B-abcd1234",
-      "PUT dav/Books/Light Novels/42-A_B-abcd1234/book.epub",
-    ]);
-    expect(
-        result.remoteFiles, ["/Books/Light Novels/42-A_B-abcd1234/book.epub"]);
-  });
+      expect(seen, [
+        "MKCOL dav/Books",
+        "MKCOL dav/Books/Light Novels",
+        "MKCOL dav/Books/Light Novels/42-A_B-abcd1234",
+        "PUT dav/Books/Light Novels/42-A_B-abcd1234/book.epub",
+      ]);
+      expect(result.remoteFiles, [
+        "/Books/Light Novels/42-A_B-abcd1234/book.epub",
+      ]);
+    },
+  );
 
   test("client reports upload failure status", () async {
     final dir = await Directory.systemTemp.createTemp("bnp_webdav_failure_");
@@ -128,29 +139,31 @@ void main() {
     );
   });
 
-  test("client treats missing remote delete target as already cleaned",
-      () async {
-    final seen = <String>[];
-    final client = WebDavClient(
-      client: MockClient((request) async {
-        seen.add("${request.method} ${request.url.pathSegments.join("/")}");
-        return http.Response("", 404);
-      }),
-    );
+  test(
+    "client treats missing remote delete target as already cleaned",
+    () async {
+      final seen = <String>[];
+      final client = WebDavClient(
+        client: MockClient((request) async {
+          seen.add("${request.method} ${request.url.pathSegments.join("/")}");
+          return http.Response("", 404);
+        }),
+      );
 
-    await client.deleteDisplayPath(
-      const WebDavConfig(
-        enabled: true,
-        serverUrl: "https://dav.example.com/dav",
-        username: "user",
-        password: "secret",
-        basePath: "/Books",
-      ),
-      "/Books/old/book.epub",
-    );
+      await client.deleteDisplayPath(
+        const WebDavConfig(
+          enabled: true,
+          serverUrl: "https://dav.example.com/dav",
+          username: "user",
+          password: "secret",
+          basePath: "/Books",
+        ),
+        "/Books/old/book.epub",
+      );
 
-    expect(seen, ["DELETE dav/Books/old/book.epub"]);
-  });
+      expect(seen, ["DELETE dav/Books/old/book.epub"]);
+    },
+  );
 
   test("download job stores WebDAV password but safe json redacts it", () {
     final job = DownloadJob(
@@ -175,8 +188,9 @@ void main() {
     );
 
     expect(job.toJson()["webDavConfig"]["password"], "secret");
-    final safeConfig = job.toJson(includeSecrets: false)["webDavConfig"]
-        as Map<String, dynamic>;
+    final safeConfig =
+        job.toJson(includeSecrets: false)["webDavConfig"]
+            as Map<String, dynamic>;
     expect(safeConfig.containsKey("password"), isFalse);
     expect(safeConfig["hasPassword"], isTrue);
   });

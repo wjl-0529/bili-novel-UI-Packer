@@ -54,6 +54,7 @@ void main() {
   });
 
   test('WebDAV and automatic update configs preserve API fields', () {
+    expect(const WebDavConfigModel().basePath, isEmpty);
     final webDav = WebDavConfigModel.fromJson({
       'enabled': true,
       'serverUrl': 'https://dav.example.com',
