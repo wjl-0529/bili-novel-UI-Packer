@@ -483,6 +483,7 @@ class _DownloadPageState extends State<DownloadPage> {
   List<NovelPreviewModel> _previews = const [];
   List<NovelPreviewFailureModel> _previewFailures = const [];
   final Set<int> _selectedPreviewIds = <int>{};
+  String? _previewSignature;
   String? _notice;
 
   @override
@@ -495,10 +496,14 @@ class _DownloadPageState extends State<DownloadPage> {
     _volumeController = TextEditingController();
     _barkServerController = TextEditingController(text: 'https://api.day.app');
     _barkKeyController = TextEditingController();
+    _urlController.addListener(_invalidateStalePreview);
+    _rangeController.addListener(_invalidateStalePreview);
   }
 
   @override
   void dispose() {
+    _urlController.removeListener(_invalidateStalePreview);
+    _rangeController.removeListener(_invalidateStalePreview);
     _urlController.dispose();
     _rangeController.dispose();
     _volumeController.dispose();
@@ -535,7 +540,9 @@ class _DownloadPageState extends State<DownloadPage> {
         events: _barkEvents,
       ),
     );
-    if (_previews.isNotEmpty && _selectedPreviewIds.isNotEmpty) {
+    if (_previews.isNotEmpty &&
+        _selectedPreviewIds.isNotEmpty &&
+        _previewSignature == _currentPreviewSignature) {
       request = JobRequestModel(
         urlTemplate: request.urlTemplate,
         rangeText: _previews
@@ -565,6 +572,24 @@ class _DownloadPageState extends State<DownloadPage> {
     }
   }
 
+  String get _currentPreviewSignature =>
+      '${_urlController.text.trim()}\n${_rangeController.text.trim()}';
+
+  void _invalidateStalePreview() {
+    if (!mounted ||
+        _previewSignature == null ||
+        _previewSignature == _currentPreviewSignature) {
+      return;
+    }
+    setState(() {
+      _previewSignature = null;
+      _previews = const [];
+      _previewFailures = const [];
+      _selectedPreviewIds.clear();
+      _notice = '搜索条件已修改，请重新搜索预览';
+    });
+  }
+
   JobRequestModel _currentRequest() {
     return JobRequestModel(
       urlTemplate: _urlController.text.trim(),
@@ -583,6 +608,7 @@ class _DownloadPageState extends State<DownloadPage> {
 
   Future<void> _preview() async {
     final request = _currentRequest();
+    final requestedSignature = _currentPreviewSignature;
     if (!request.urlTemplate.contains('{id}') || request.rangeText.isEmpty) {
       setState(() => _notice = '请先填写包含 {id} 的 URL 模板和小说 ID 范围');
       return;
@@ -593,15 +619,21 @@ class _DownloadPageState extends State<DownloadPage> {
       _previews = const [];
       _previewFailures = const [];
       _selectedPreviewIds.clear();
+      _previewSignature = null;
     });
     try {
       final response = await widget.api.previewNovel(request);
       if (!mounted) {
         return;
       }
+      if (_currentPreviewSignature != requestedSignature) {
+        setState(() => _notice = '搜索条件已修改，请重新搜索预览');
+        return;
+      }
       setState(() {
         _previews = response.previews;
         _previewFailures = response.failures;
+        _previewSignature = requestedSignature;
         _selectedPreviewIds.addAll(
           response.previews.map((item) => item.sourceId),
         );
@@ -837,24 +869,10 @@ class _PreviewResults extends StatelessWidget {
           ],
         ),
         for (final preview in previews)
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            value: selectedIds.contains(preview.sourceId),
-            onChanged: (value) => onToggle(preview.sourceId, value == true),
-            title: Text(
-              '#${preview.sourceId} ${preview.title}',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(
-              [
-                if (preview.author.isNotEmpty) preview.author,
-                if (preview.sourceName.isNotEmpty) preview.sourceName,
-                if (preview.chapterCount != null) '${preview.chapterCount} 章',
-              ].join(' · '),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
+          _PreviewItem(
+            preview: preview,
+            selected: selectedIds.contains(preview.sourceId),
+            onChanged: (value) => onToggle(preview.sourceId, value),
           ),
         for (final failure in failures)
           ListTile(
@@ -864,6 +882,130 @@ class _PreviewResults extends StatelessWidget {
             subtitle: Text(failure.message),
           ),
       ],
+    );
+  }
+}
+
+class _PreviewItem extends StatelessWidget {
+  final NovelPreviewModel preview;
+  final bool selected;
+  final ValueChanged<bool> onChanged;
+
+  const _PreviewItem({
+    required this.preview,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = [
+      if (preview.sourceName.isNotEmpty) preview.sourceName,
+      if (preview.publisher?.isNotEmpty == true) preview.publisher!,
+      if (preview.volumeCount != null) '${preview.volumeCount} 卷',
+      if (preview.chapterCount != null) '${preview.chapterCount} 章',
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Checkbox(
+            value: selected,
+            onChanged: (value) => onChanged(value == true),
+          ),
+          const SizedBox(width: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              width: 62,
+              height: 88,
+              child: preview.coverUrl == null
+                  ? const ColoredBox(
+                      color: Color(0xffe8edf0),
+                      child: Icon(Icons.menu_book_outlined),
+                    )
+                  : Image.network(
+                      preview.coverUrl!,
+                      fit: BoxFit.cover,
+                      headers: {'Referer': preview.url},
+                      errorBuilder: (_, _, _) => const ColoredBox(
+                        color: Color(0xffe8edf0),
+                        child: Icon(Icons.menu_book_outlined),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '#${preview.sourceId} ${preview.title}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                if (preview.alias?.isNotEmpty == true ||
+                    preview.author.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      [
+                        if (preview.alias?.isNotEmpty == true) preview.alias!,
+                        if (preview.author.isNotEmpty) preview.author,
+                      ].join(' · '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                if (meta.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      meta,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                if (preview.status.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      preview.status,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                if (preview.tags.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      preview.tags.take(5).join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                if (preview.description?.isNotEmpty == true)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text(
+                      preview.description!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1070,8 +1212,18 @@ class _JobsPageState extends State<JobsPage> {
                 separatorBuilder: (_, _) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
                   final job = _jobs[index];
+                  final queueAhead = job.status == 'queued'
+                      ? _jobs
+                                .take(index)
+                                .where((item) => item.status == 'queued')
+                                .length +
+                            (_jobs.any((item) => item.status == 'running')
+                                ? 1
+                                : 0)
+                      : 0;
                   return JobCard(
                     job: job,
+                    queueAhead: queueAhead,
                     onTap: () => _openDetails(job),
                     onCancel: () => _runAction(job, widget.api.cancelJob),
                     onRetry: () => _runAction(job, widget.api.retryJob),
@@ -1086,6 +1238,7 @@ class _JobsPageState extends State<JobsPage> {
 
 class JobCard extends StatelessWidget {
   final DownloadJobModel job;
+  final int queueAhead;
   final VoidCallback onTap;
   final VoidCallback onCancel;
   final VoidCallback onRetry;
@@ -1093,6 +1246,7 @@ class JobCard extends StatelessWidget {
 
   const JobCard({
     required this.job,
+    this.queueAhead = 0,
     required this.onTap,
     required this.onCancel,
     required this.onRetry,
@@ -1151,7 +1305,11 @@ class JobCard extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                job.error?.isNotEmpty == true ? job.error! : job.message,
+                job.status == 'queued' && queueAhead > 0
+                    ? '前面还有 $queueAhead 个任务，服务器将依次处理'
+                    : job.error?.isNotEmpty == true
+                    ? job.error!
+                    : job.message,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.bodySmall,
