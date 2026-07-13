@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 45
     env:
       FLUTTER_VERSION: 3.44.3
-      APP_VERSION: 0.2.48
+      APP_VERSION: 0.2.49
       BUNDLE_ID: com.wjl0529.bilinovelpacker
       REMOTE_SERVER_URL: ${{ vars.IOS_REMOTE_SERVER_URL || 'https://book.jinhub.cn' }}
     steps:

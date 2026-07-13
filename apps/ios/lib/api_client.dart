@@ -285,12 +285,12 @@ class ApiClient {
           baseUri.resolve(path),
         );
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.48');
+        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.49');
+        _applyCookie(request);
         if (body != null) {
           request.headers.contentType = ContentType.json;
           request.write(jsonEncode(body));
         }
-        _applyCookie(request);
         response = await request.close().timeout(const Duration(seconds: 30));
         networkError = null;
         break;
