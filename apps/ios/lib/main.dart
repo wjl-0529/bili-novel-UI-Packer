@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'api_client.dart';
+import 'biometric_service.dart';
 import 'native_models.dart';
 
 const remoteServerUri = String.fromEnvironment(
@@ -33,12 +35,45 @@ class NovelPackerIosApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: scheme,
-        scaffoldBackgroundColor: const Color(0xfff5f7f9),
+        scaffoldBackgroundColor: const Color(0xffe8f0ef),
         useMaterial3: true,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Colors.white.withValues(alpha: 0.70),
+          indicatorColor: scheme.primary.withValues(alpha: 0.16),
+          elevation: 0,
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: scheme.primary.withValues(alpha: 0.88),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(
+            backgroundColor: Colors.white.withValues(alpha: 0.34),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ),
         inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(14)),
+            borderSide: BorderSide(color: Color(0x665f6f6d)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(14)),
+            borderSide: BorderSide(color: Color(0x665f6f6d)),
+          ),
           filled: true,
-          fillColor: Colors.white,
+          fillColor: Color(0xb3ffffff),
         ),
         cardTheme: const CardThemeData(
           margin: EdgeInsets.zero,
@@ -59,6 +94,7 @@ class IosShellPage extends StatefulWidget {
 }
 
 class _IosShellPageState extends State<IosShellPage> {
+  final BiometricService _biometric = BiometricService();
   Uri _serverUri = Uri.parse(remoteServerUri);
   ApiClient? _api;
   Object? _startupError;
@@ -225,6 +261,7 @@ class _IosShellPageState extends State<IosShellPage> {
     }
     if (!_authenticated) {
       return LoginPage(
+        biometric: _biometric,
         serverUri: _serverUri,
         onLogin: _login,
         onChangeServer: _showServerDialog,
@@ -232,6 +269,7 @@ class _IosShellPageState extends State<IosShellPage> {
     }
     return NativeHomePage(
       api: api,
+      biometric: _biometric,
       serverUri: _serverUri,
       onLogout: _logout,
       onChangeServer: _changeServer,
@@ -264,11 +302,13 @@ class _IosShellPageState extends State<IosShellPage> {
 }
 
 class LoginPage extends StatefulWidget {
+  final BiometricService biometric;
   final Uri serverUri;
   final Future<void> Function(String password) onLogin;
   final Future<void> Function() onChangeServer;
 
   const LoginPage({
+    required this.biometric,
     required this.serverUri,
     required this.onLogin,
     required this.onChangeServer,
@@ -282,12 +322,34 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
   bool _busy = false;
+  bool _biometricBusy = false;
+  bool _biometricAvailable = false;
+  bool _hasBiometricPassword = false;
+  bool _rememberBiometric = true;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadBiometricState());
+  }
 
   @override
   void dispose() {
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadBiometricState() async {
+    final available = await widget.biometric.isAvailable();
+    final hasPassword = available && await widget.biometric.hasSavedPassword();
+    if (mounted) {
+      setState(() {
+        _biometricAvailable = available;
+        _hasBiometricPassword = hasPassword;
+        _rememberBiometric = available;
+      });
+    }
   }
 
   Future<void> _submit() async {
@@ -299,8 +361,17 @@ class _LoginPageState extends State<LoginPage> {
       _busy = true;
       _error = null;
     });
+    final password = _passwordController.text;
     try {
-      await widget.onLogin(_passwordController.text);
+      await widget.onLogin(password);
+      if (_biometricAvailable && _rememberBiometric) {
+        try {
+          await widget.biometric.savePassword(password);
+          _hasBiometricPassword = true;
+        } catch (_) {
+          // Password login remains successful when Keychain is unavailable.
+        }
+      }
     } catch (error) {
       if (mounted) {
         setState(() => _error = error.toString());
@@ -308,6 +379,39 @@ class _LoginPageState extends State<LoginPage> {
     } finally {
       if (mounted) {
         setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _loginWithFaceId() async {
+    setState(() {
+      _biometricBusy = true;
+      _error = null;
+    });
+    try {
+      final authenticated = await widget.biometric.authenticate();
+      if (!authenticated) {
+        return;
+      }
+      final password = await widget.biometric.readPassword();
+      if (password == null || password.isEmpty) {
+        setState(() => _hasBiometricPassword = false);
+        return;
+      }
+      await widget.onLogin(password);
+    } catch (error) {
+      if (error is ApiException && error.statusCode == 401) {
+        await widget.biometric.clearPassword();
+        if (mounted) {
+          setState(() => _hasBiometricPassword = false);
+        }
+      }
+      if (mounted) {
+        setState(() => _error = 'Face ID 登录失败：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _biometricBusy = false);
       }
     }
   }
@@ -321,8 +425,7 @@ class _LoginPageState extends State<LoginPage> {
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 460),
-              child: Card(
-                color: Colors.white,
+              child: GlassSurface(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
@@ -370,8 +473,35 @@ class _LoginPageState extends State<LoginPage> {
                             : const Icon(Icons.login),
                         label: const Text('登录'),
                       ),
+                      if (_biometricAvailable && !_hasBiometricPassword)
+                        SwitchListTile.adaptive(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('启用 Face ID 快速登录'),
+                          value: _rememberBiometric,
+                          onChanged: _busy || _biometricBusy
+                              ? null
+                              : (value) =>
+                                    setState(() => _rememberBiometric = value),
+                        ),
+                      if (_biometricAvailable && _hasBiometricPassword)
+                        OutlinedButton.icon(
+                          onPressed: _busy || _biometricBusy
+                              ? null
+                              : _loginWithFaceId,
+                          icon: _biometricBusy
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.face_retouching_natural),
+                          label: const Text('使用 Face ID 登录'),
+                        ),
                       TextButton.icon(
-                        onPressed: _busy ? null : widget.onChangeServer,
+                        onPressed: _busy || _biometricBusy
+                            ? null
+                            : widget.onChangeServer,
                         icon: const Icon(Icons.dns_outlined),
                         label: const Text('切换服务器'),
                       ),
@@ -389,12 +519,14 @@ class _LoginPageState extends State<LoginPage> {
 
 class NativeHomePage extends StatefulWidget {
   final ApiClient api;
+  final BiometricService biometric;
   final Uri serverUri;
   final Future<void> Function() onLogout;
   final Future<void> Function(String value) onChangeServer;
 
   const NativeHomePage({
     required this.api,
+    required this.biometric,
     required this.serverUri,
     required this.onLogout,
     required this.onChangeServer,
@@ -421,38 +553,45 @@ class _NativeHomePageState extends State<NativeHomePage> {
       JobsPage(key: _jobsKey, api: widget.api),
       SettingsPage(
         api: widget.api,
+        biometric: widget.biometric,
         serverUri: widget.serverUri,
         onLogout: widget.onLogout,
         onChangeServer: widget.onChangeServer,
       ),
     ];
     return Scaffold(
+      extendBody: true,
       body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (index) {
-          setState(() => _index = index);
-          if (index == 1) {
-            unawaited(_jobsKey.currentState?.refresh());
-          }
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.download_outlined),
-            selectedIcon: Icon(Icons.download),
-            label: '下载',
+      bottomNavigationBar: ClipRect(
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: (index) {
+              setState(() => _index = index);
+              if (index == 1) {
+                unawaited(_jobsKey.currentState?.refresh());
+              }
+            },
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.download_outlined),
+                selectedIcon: Icon(Icons.download),
+                label: '下载',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.list_alt_outlined),
+                selectedIcon: Icon(Icons.list_alt),
+                label: '任务',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: '设置',
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.list_alt_outlined),
-            selectedIcon: Icon(Icons.list_alt),
-            label: '任务',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: '设置',
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -658,7 +797,7 @@ class _DownloadPageState extends State<DownloadPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('新建下载任务')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 112),
         children: [
           _SectionCard(
             title: '小说来源',
@@ -1207,7 +1346,7 @@ class _JobsPageState extends State<JobsPage> {
           : RefreshIndicator(
               onRefresh: refresh,
               child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 112),
                 itemCount: _jobs.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 10),
                 itemBuilder: (context, index) {
@@ -1263,8 +1402,9 @@ class JobCard extends StatelessWidget {
       'canceled',
       'paused',
     }.contains(job.status);
-    return Card(
-      color: Colors.white,
+    return GlassSurface(
+      borderRadius: BorderRadius.circular(16),
+      blur: false,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
@@ -1584,12 +1724,14 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
 
 class SettingsPage extends StatefulWidget {
   final ApiClient api;
+  final BiometricService biometric;
   final Uri serverUri;
   final Future<void> Function() onLogout;
   final Future<void> Function(String value) onChangeServer;
 
   const SettingsPage({
     required this.api,
+    required this.biometric,
     required this.serverUri,
     required this.onLogout,
     required this.onChangeServer,
@@ -1618,6 +1760,10 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _webDavNotice;
   String? _cleanupNotice;
   String? _autoUpdateNotice;
+  bool _biometricAvailable = false;
+  bool _faceIdEnabled = false;
+  bool _faceIdBusy = false;
+  String? _faceIdNotice;
 
   @override
   void initState() {
@@ -1629,6 +1775,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _retentionController = TextEditingController(text: '7');
     _dailyTimeController = TextEditingController(text: '03:00');
     unawaited(_load());
+    unawaited(_loadBiometric());
   }
 
   @override
@@ -1681,6 +1828,80 @@ class _SettingsPageState extends State<SettingsPage> {
     _webDavPathController.text = _webDav.basePath;
     _retentionController.text = _cleanup.retentionDays.toString();
     _dailyTimeController.text = _autoUpdate.dailyTime;
+  }
+
+  Future<void> _loadBiometric() async {
+    final available = await widget.biometric.isAvailable();
+    final enabled = available && await widget.biometric.hasSavedPassword();
+    if (mounted) {
+      setState(() {
+        _biometricAvailable = available;
+        _faceIdEnabled = enabled;
+      });
+    }
+  }
+
+  Future<void> _toggleFaceId(bool value) async {
+    if (!value) {
+      await widget.biometric.clearPassword();
+      if (mounted) {
+        setState(() {
+          _faceIdEnabled = false;
+          _faceIdNotice = 'Face ID 快速登录已关闭';
+        });
+      }
+      return;
+    }
+    final controller = TextEditingController();
+    final password = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('启用 Face ID'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          decoration: const InputDecoration(labelText: '管理员密码'),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('启用'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (password == null || password.isEmpty || !mounted) {
+      return;
+    }
+    setState(() => _faceIdBusy = true);
+    try {
+      await widget.api.login(password);
+      await widget.biometric.savePassword(password);
+      if (mounted) {
+        setState(() {
+          _faceIdEnabled = true;
+          _faceIdNotice = 'Face ID 快速登录已启用';
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Face ID 快速登录已启用')));
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _faceIdNotice = 'Face ID 启用失败：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _faceIdBusy = false);
+      }
+    }
   }
 
   WebDavConfigModel _editedWebDav() {
@@ -1903,10 +2124,10 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 112),
         children: [
-          Card(
-            color: Colors.white,
+          GlassSurface(
+            borderRadius: BorderRadius.circular(16),
             child: ListTile(
               leading: const Icon(Icons.dns_outlined),
               title: const Text('服务器地址'),
@@ -1914,6 +2135,27 @@ class _SettingsPageState extends State<SettingsPage> {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _changeServer(context),
             ),
+          ),
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: '安全登录',
+            icon: Icons.face_retouching_natural,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Face ID 快速登录'),
+                subtitle: Text(
+                  _biometricAvailable
+                      ? '凭据保存在 iOS Keychain，仅用于自动登录服务器'
+                      : '当前设备未检测到可用的 Face ID',
+                ),
+                value: _faceIdEnabled,
+                onChanged: !_biometricAvailable || _faceIdBusy
+                    ? null
+                    : _toggleFaceId,
+              ),
+              if (_faceIdNotice != null) Text(_faceIdNotice!),
+            ],
           ),
           const SizedBox(height: 12),
           _SectionCard(
@@ -2075,8 +2317,8 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
           const SizedBox(height: 12),
-          Card(
-            color: Colors.white,
+          GlassSurface(
+            borderRadius: BorderRadius.circular(16),
             child: ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('退出登录'),
@@ -2109,8 +2351,7 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: Colors.white,
+    return GlassSurface(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
         child: Column(
@@ -2131,6 +2372,50 @@ class _SectionCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class GlassSurface extends StatelessWidget {
+  final Widget child;
+  final BorderRadius borderRadius;
+  final bool blur;
+
+  const GlassSurface({
+    required this.child,
+    this.borderRadius = const BorderRadius.all(Radius.circular(20)),
+    this.blur = true,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final surface = DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.62),
+        borderRadius: borderRadius,
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.72),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 22,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: child,
+    );
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: blur
+          ? BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: surface,
+            )
+          : surface,
     );
   }
 }

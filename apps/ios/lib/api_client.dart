@@ -72,6 +72,8 @@ class ApiClient {
       'POST',
       '/api/novel/preview',
       body: request.toJson(),
+      timeout: const Duration(minutes: 5),
+      timeoutMessage: '搜索耗时较长，服务器仍未返回结果，请稍后重试',
     );
     final rawPreviews = payload['previews'];
     final rawFailures = payload['previewFailures'];
@@ -168,7 +170,13 @@ class ApiClient {
   }
 
   Future<void> testWebDavConfig(WebDavConfigModel config) async {
-    await _request('POST', '/api/webdav/test', body: config.toJson());
+    await _request(
+      'POST',
+      '/api/webdav/test',
+      body: config.toJson(),
+      timeout: const Duration(minutes: 2),
+      timeoutMessage: 'WebDAV 测试超时，请检查地址和网络',
+    );
   }
 
   Future<CleanupConfigModel> getCleanupConfig() async {
@@ -221,7 +229,12 @@ class ApiClient {
 
   Future<({AutoUpdateConfigModel config, AutoUpdateRunResultModel result})>
   runAutoUpdateNow() async {
-    final payload = await _request('POST', '/api/auto-update/run');
+    final payload = await _request(
+      'POST',
+      '/api/auto-update/run',
+      timeout: const Duration(minutes: 10),
+      timeoutMessage: '自动更新检查超时，服务器可能仍在检查章节',
+    );
     final result = payload['result'] is Map
         ? Map<String, dynamic>.from(payload['result'] as Map)
         : const <String, dynamic>{};
@@ -274,28 +287,29 @@ class ApiClient {
     String method,
     String path, {
     Map<String, dynamic>? body,
+    Duration timeout = const Duration(seconds: 30),
+    String timeoutMessage = '连接服务器超时，请检查网络和服务器地址',
   }) async {
     late HttpClientResponse response;
     ApiException? networkError;
     final attempts = method == 'GET' ? 2 : 1;
     for (var attempt = 0; attempt < attempts; attempt++) {
       try {
-        final request = await _httpClient.openUrl(
-          method,
-          baseUri.resolve(path),
-        );
+        final request = await _httpClient
+            .openUrl(method, baseUri.resolve(path))
+            .timeout(timeout);
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.49');
+        request.headers.set(HttpHeaders.userAgentHeader, 'BNP-iOS/0.2.51');
         _applyCookie(request);
         if (body != null) {
           request.headers.contentType = ContentType.json;
           request.write(jsonEncode(body));
         }
-        response = await request.close().timeout(const Duration(seconds: 30));
+        response = await request.close().timeout(timeout);
         networkError = null;
         break;
       } on TimeoutException {
-        networkError = const ApiException(0, '连接服务器超时，请检查网络和服务器地址');
+        networkError = ApiException(0, timeoutMessage);
       } on SocketException catch (error) {
         networkError = ApiException(0, '无法连接服务器：${error.message}');
       } on TlsException catch (error) {

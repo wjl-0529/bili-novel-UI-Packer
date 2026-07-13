@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 45
     env:
       FLUTTER_VERSION: 3.44.3
-      APP_VERSION: 0.2.50
+      APP_VERSION: 0.2.51
       BUNDLE_ID: com.wjl0529.bilinovelpacker
       REMOTE_SERVER_URL: ${{ vars.IOS_REMOTE_SERVER_URL || 'https://book.jinhub.cn' }}
     steps:
@@ -84,6 +84,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 轻小说打包器" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleName 轻小说打包器" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 仅用于连接应用内部的本地服务" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSFaceIDUsageDescription string 使用 Face ID 快速登录轻小说打包器" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" ios/Runner/Info.plist || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" ios/Runner/Info.plist
