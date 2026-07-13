@@ -393,6 +393,7 @@ class _NativeHomePageState extends State<NativeHomePage> {
       DownloadPage(api: widget.api, onCreated: _openJobs),
       JobsPage(key: _jobsKey, api: widget.api),
       SettingsPage(
+        api: widget.api,
         serverUri: widget.serverUri,
         onLogout: widget.onLogout,
         onChangeServer: widget.onChangeServer,
@@ -449,7 +450,12 @@ class _DownloadPageState extends State<DownloadPage> {
   bool _combineVolume = false;
   bool _addChapterTitle = false;
   bool _barkEnabled = false;
+  BarkEventsModel _barkEvents = const BarkEventsModel();
   bool _busy = false;
+  bool _previewBusy = false;
+  List<NovelPreviewModel> _previews = const [];
+  List<NovelPreviewFailureModel> _previewFailures = const [];
+  final Set<int> _selectedPreviewIds = <int>{};
   String? _notice;
 
   @override
@@ -489,7 +495,7 @@ class _DownloadPageState extends State<DownloadPage> {
       _busy = true;
       _notice = null;
     });
-    final request = JobRequestModel(
+    var request = JobRequestModel(
       urlTemplate: template,
       rangeText: range,
       volumeRangeText: _volumeController.text.trim(),
@@ -499,8 +505,22 @@ class _DownloadPageState extends State<DownloadPage> {
         enabled: _barkEnabled,
         serverUrl: _barkServerController.text.trim(),
         deviceKey: _barkKeyController.text.trim(),
+        events: _barkEvents,
       ),
     );
+    if (_previews.isNotEmpty && _selectedPreviewIds.isNotEmpty) {
+      request = JobRequestModel(
+        urlTemplate: request.urlTemplate,
+        rangeText: _previews
+            .where((preview) => _selectedPreviewIds.contains(preview.sourceId))
+            .map((preview) => preview.sourceId)
+            .join(','),
+        volumeRangeText: request.volumeRangeText,
+        combineVolume: request.combineVolume,
+        addChapterTitle: request.addChapterTitle,
+        barkConfig: request.barkConfig,
+      );
+    }
     try {
       final jobs = await widget.api.createJobs(request);
       if (mounted) {
@@ -514,6 +534,62 @@ class _DownloadPageState extends State<DownloadPage> {
     } finally {
       if (mounted) {
         setState(() => _busy = false);
+      }
+    }
+  }
+
+  JobRequestModel _currentRequest() {
+    return JobRequestModel(
+      urlTemplate: _urlController.text.trim(),
+      rangeText: _rangeController.text.trim(),
+      volumeRangeText: _volumeController.text.trim(),
+      combineVolume: _combineVolume,
+      addChapterTitle: _addChapterTitle,
+      barkConfig: BarkConfigModel(
+        enabled: _barkEnabled,
+        serverUrl: _barkServerController.text.trim(),
+        deviceKey: _barkKeyController.text.trim(),
+        events: _barkEvents,
+      ),
+    );
+  }
+
+  Future<void> _preview() async {
+    final request = _currentRequest();
+    if (!request.urlTemplate.contains('{id}') || request.rangeText.isEmpty) {
+      setState(() => _notice = '请先填写包含 {id} 的 URL 模板和小说 ID 范围');
+      return;
+    }
+    setState(() {
+      _previewBusy = true;
+      _notice = null;
+      _previews = const [];
+      _previewFailures = const [];
+      _selectedPreviewIds.clear();
+    });
+    try {
+      final response = await widget.api.previewNovel(request);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _previews = response.previews;
+        _previewFailures = response.failures;
+        _selectedPreviewIds.addAll(
+          response.previews.map((item) => item.sourceId),
+        );
+        _notice = response.previews.isEmpty
+            ? '未找到可预览的小说'
+            : '已找到 ${response.previews.length} 本小说'
+                  '${response.failures.isEmpty ? '' : '，跳过 ${response.failures.length} 个 ID'}';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _notice = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _previewBusy = false);
       }
     }
   }
@@ -600,12 +676,80 @@ class _DownloadPageState extends State<DownloadPage> {
                   obscureText: true,
                   decoration: const InputDecoration(labelText: 'Device Key'),
                 ),
+                const SizedBox(height: 8),
+                const Text(
+                  '通知事件',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                for (final entry in <String, String>{
+                  'start': '开始',
+                  'success': '成功',
+                  'failure': '失败',
+                  'progress': '进度',
+                  'update': '追更',
+                }.entries)
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(entry.value),
+                    value: switch (entry.key) {
+                      'start' => _barkEvents.start,
+                      'success' => _barkEvents.success,
+                      'failure' => _barkEvents.failure,
+                      'progress' => _barkEvents.progress,
+                      _ => _barkEvents.update,
+                    },
+                    onChanged: (value) => setState(() {
+                      _barkEvents = switch (entry.key) {
+                        'start' => _barkEvents.copyWith(start: value),
+                        'success' => _barkEvents.copyWith(success: value),
+                        'failure' => _barkEvents.copyWith(failure: value),
+                        'progress' => _barkEvents.copyWith(progress: value),
+                        _ => _barkEvents.copyWith(update: value),
+                      };
+                    }),
+                  ),
               ],
             ],
           ),
+          const SizedBox(height: 12),
+          if (_previews.isNotEmpty || _previewFailures.isNotEmpty)
+            _PreviewResults(
+              previews: _previews,
+              failures: _previewFailures,
+              selectedIds: _selectedPreviewIds,
+              onToggle: (id, selected) => setState(() {
+                if (selected) {
+                  _selectedPreviewIds.add(id);
+                } else {
+                  _selectedPreviewIds.remove(id);
+                }
+              }),
+              onSelectAll: () => setState(() {
+                _selectedPreviewIds
+                  ..clear()
+                  ..addAll(_previews.map((item) => item.sourceId));
+              }),
+              onClear: () => setState(() => _selectedPreviewIds.clear()),
+            ),
+          if (_previews.isNotEmpty || _previewFailures.isNotEmpty)
+            const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _previewBusy ? null : _preview,
+            icon: _previewBusy
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.search),
+            label: Text(_previewBusy ? '正在搜索...' : '搜索并预览'),
+          ),
           const SizedBox(height: 16),
           FilledButton.icon(
-            onPressed: _busy ? null : _submit,
+            onPressed:
+                _busy || (_previews.isNotEmpty && _selectedPreviewIds.isEmpty)
+                ? null
+                : _submit,
             icon: _busy
                 ? const SizedBox.square(
                     dimension: 18,
@@ -631,6 +775,72 @@ class _DownloadPageState extends State<DownloadPage> {
   }
 }
 
+class _PreviewResults extends StatelessWidget {
+  final List<NovelPreviewModel> previews;
+  final List<NovelPreviewFailureModel> failures;
+  final Set<int> selectedIds;
+  final void Function(int id, bool selected) onToggle;
+  final VoidCallback onSelectAll;
+  final VoidCallback onClear;
+
+  const _PreviewResults({
+    required this.previews,
+    required this.failures,
+    required this.selectedIds,
+    required this.onToggle,
+    required this.onSelectAll,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionCard(
+      title: '搜索结果（已选 ${selectedIds.length}/${previews.length}）',
+      icon: Icons.search,
+      children: [
+        Row(
+          children: [
+            TextButton(onPressed: onSelectAll, child: const Text('全选')),
+            TextButton(onPressed: onClear, child: const Text('清空')),
+            if (failures.isNotEmpty)
+              Text(
+                '跳过 ${failures.length} 个 ID',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+          ],
+        ),
+        for (final preview in previews)
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: selectedIds.contains(preview.sourceId),
+            onChanged: (value) => onToggle(preview.sourceId, value == true),
+            title: Text(
+              '#${preview.sourceId} ${preview.title}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              [
+                if (preview.author.isNotEmpty) preview.author,
+                if (preview.sourceName.isNotEmpty) preview.sourceName,
+                if (preview.chapterCount != null) '${preview.chapterCount} 章',
+              ].join(' · '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        for (final failure in failures)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.error_outline, color: Colors.orange),
+            title: Text('#${failure.sourceId} 搜索失败'),
+            subtitle: Text(failure.message),
+          ),
+      ],
+    );
+  }
+}
+
 class JobsPage extends StatefulWidget {
   final ApiClient api;
 
@@ -644,6 +854,7 @@ class _JobsPageState extends State<JobsPage> {
   List<DownloadJobModel> _jobs = const [];
   Timer? _timer;
   bool _loading = true;
+  bool _cleanupBusy = false;
   String? _error;
 
   @override
@@ -709,12 +920,105 @@ class _JobsPageState extends State<JobsPage> {
     await refresh();
   }
 
+  Future<void> _deleteJob(DownloadJobModel job) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除任务？'),
+        content: Text(
+          '将删除任务 #${job.sourceId}'
+          '${job.outputFiles.isEmpty ? '' : '及 ${job.outputFiles.length} 个输出文件'}，此操作无法撤销。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _runAction(job, widget.api.deleteJob);
+    }
+  }
+
+  Future<void> _cleanupCompleted() async {
+    final count = _jobs
+        .where(
+          (job) =>
+              const {'succeeded', 'failed', 'canceled'}.contains(job.status),
+        )
+        .length;
+    if (count == 0) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('没有可清理的已完成任务')));
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清理已完成任务？'),
+        content: Text('将删除 $count 个已完成、失败或已取消任务及其输出文件。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    setState(() => _cleanupBusy = true);
+    try {
+      final result = await widget.api.cleanupCompletedJobs();
+      if (mounted) {
+        setState(() => _jobs = result.jobs);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已清理 ${result.deleted} 个任务')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cleanupBusy = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('任务队列'),
         actions: [
+          IconButton(
+            tooltip: '清理已完成任务',
+            onPressed: _cleanupBusy
+                ? null
+                : () => unawaited(_cleanupCompleted()),
+            icon: _cleanupBusy
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cleaning_services_outlined),
+          ),
           IconButton(
             tooltip: '刷新',
             onPressed: () => unawaited(refresh()),
@@ -744,7 +1048,7 @@ class _JobsPageState extends State<JobsPage> {
                     onTap: () => _openDetails(job),
                     onCancel: () => _runAction(job, widget.api.cancelJob),
                     onRetry: () => _runAction(job, widget.api.retryJob),
-                    onDelete: () => _runAction(job, widget.api.deleteJob),
+                    onDelete: () => _deleteJob(job),
                   );
                 },
               ),
@@ -882,6 +1186,7 @@ class JobDetailSheet extends StatefulWidget {
 
 class _JobDetailSheetState extends State<JobDetailSheet> {
   String? _busyFile;
+  bool _cleaningOutputs = false;
 
   Future<void> _shareFile(String fileName) async {
     setState(() => _busyFile = fileName);
@@ -928,6 +1233,55 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
     }
   }
 
+  Future<void> _deleteOutputs() async {
+    if (widget.job.outputFiles.isEmpty) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清理输出文件？'),
+        content: Text(
+          '将删除 ${widget.job.outputFiles.length} 个 EPUB 文件，但保留任务记录和日志。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    setState(() => _cleaningOutputs = true);
+    try {
+      await widget.api.deleteJobOutputs(widget.job.id);
+      await widget.onChanged();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('输出文件已清理，任务记录已保留')));
+        Navigator.of(context).pop();
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cleaningOutputs = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final job = widget.job;
@@ -957,6 +1311,40 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
             LinearProgressIndicator(value: job.progress.clamp(0, 1)),
             const SizedBox(height: 12),
             Text(job.error?.isNotEmpty == true ? job.error! : job.message),
+            if (job.outputDir != null || job.sourceName != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                [
+                  if (job.sourceName != null) '来源：${job.sourceName}',
+                  if (job.volumeSummary != null) '分卷：${job.volumeSummary}',
+                  if (job.outputDir != null) '保存位置：${job.outputDir}',
+                ].join('\n'),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (job.uploadStatus != null && job.uploadStatus != 'disabled')
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'WebDAV：${_uploadStatusText(job.uploadStatus!, job.uploadError)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            if (job.outputFiles.isNotEmpty &&
+                const {'succeeded', 'failed', 'canceled'}.contains(job.status))
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _cleaningOutputs ? null : _deleteOutputs,
+                  icon: _cleaningOutputs
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.delete_sweep_outlined),
+                  label: const Text('清理输出文件'),
+                ),
+              ),
             if (job.outputFiles.isNotEmpty) ...[
               const SizedBox(height: 22),
               const Text(
@@ -1009,29 +1397,275 @@ class _JobDetailSheetState extends State<JobDetailSheet> {
   }
 }
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
+  final ApiClient api;
   final Uri serverUri;
   final Future<void> Function() onLogout;
   final Future<void> Function(String value) onChangeServer;
 
   const SettingsPage({
+    required this.api,
     required this.serverUri,
     required this.onLogout,
     required this.onChangeServer,
     super.key,
   });
 
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  WebDavConfigModel _webDav = const WebDavConfigModel();
+  CleanupConfigModel _cleanup = const CleanupConfigModel();
+  AutoUpdateConfigModel _autoUpdate = const AutoUpdateConfigModel();
+  List<DownloadJobModel> _jobs = const [];
+  late final TextEditingController _webDavServerController;
+  late final TextEditingController _webDavUsernameController;
+  late final TextEditingController _webDavPasswordController;
+  late final TextEditingController _webDavPathController;
+  late final TextEditingController _retentionController;
+  late final TextEditingController _dailyTimeController;
+  bool _loading = true;
+  bool _webDavBusy = false;
+  bool _cleanupBusy = false;
+  bool _autoUpdateBusy = false;
+  String? _webDavNotice;
+  String? _cleanupNotice;
+  String? _autoUpdateNotice;
+
+  @override
+  void initState() {
+    super.initState();
+    _webDavServerController = TextEditingController();
+    _webDavUsernameController = TextEditingController();
+    _webDavPasswordController = TextEditingController();
+    _webDavPathController = TextEditingController();
+    _retentionController = TextEditingController(text: '7');
+    _dailyTimeController = TextEditingController(text: '03:00');
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _webDavServerController.dispose();
+    _webDavUsernameController.dispose();
+    _webDavPasswordController.dispose();
+    _webDavPathController.dispose();
+    _retentionController.dispose();
+    _dailyTimeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final values = await Future.wait<Object>([
+        widget.api.getWebDavConfig(),
+        widget.api.getCleanupConfig(),
+        widget.api.getAutoUpdateConfig(),
+        widget.api.getJobs(),
+      ]);
+      if (!mounted) {
+        return;
+      }
+      final webDav = values[0] as WebDavConfigModel;
+      final cleanup = values[1] as CleanupConfigModel;
+      final autoUpdate = values[2] as AutoUpdateConfigModel;
+      setState(() {
+        _webDav = webDav;
+        _cleanup = cleanup;
+        _autoUpdate = autoUpdate;
+        _jobs = values[3] as List<DownloadJobModel>;
+        _loading = false;
+        _syncControllers();
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _autoUpdateNotice = error.toString();
+        });
+      }
+    }
+  }
+
+  void _syncControllers() {
+    _webDavServerController.text = _webDav.serverUrl;
+    _webDavUsernameController.text = _webDav.username;
+    _webDavPasswordController.clear();
+    _webDavPathController.text = _webDav.basePath;
+    _retentionController.text = _cleanup.retentionDays.toString();
+    _dailyTimeController.text = _autoUpdate.dailyTime;
+  }
+
+  WebDavConfigModel _editedWebDav() {
+    return _webDav.copyWith(
+      serverUrl: _webDavServerController.text.trim(),
+      username: _webDavUsernameController.text.trim(),
+      password: _webDavPasswordController.text,
+      basePath: _webDavPathController.text.trim(),
+    );
+  }
+
+  Future<void> _saveWebDav({bool clearPassword = false}) async {
+    setState(() {
+      _webDavBusy = true;
+      _webDavNotice = null;
+    });
+    try {
+      final config = await widget.api.saveWebDavConfig(
+        _editedWebDav(),
+        clearPassword: clearPassword,
+      );
+      if (mounted) {
+        setState(() {
+          _webDav = config;
+          _webDavPasswordController.clear();
+          _webDavNotice = clearPassword ? '已清空保存的密码' : 'WebDAV 设置已保存';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _webDavNotice = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _webDavBusy = false);
+      }
+    }
+  }
+
+  Future<void> _testWebDav() async {
+    setState(() {
+      _webDavBusy = true;
+      _webDavNotice = null;
+    });
+    try {
+      await widget.api.testWebDavConfig(_editedWebDav());
+      if (mounted) {
+        setState(() => _webDavNotice = 'WebDAV 连接测试通过');
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _webDavNotice = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _webDavBusy = false);
+      }
+    }
+  }
+
+  Future<void> _saveCleanup() async {
+    final days =
+        int.tryParse(_retentionController.text)?.clamp(1, 365).toInt() ?? 7;
+    setState(() {
+      _cleanupBusy = true;
+      _cleanupNotice = null;
+    });
+    try {
+      final config = await widget.api.saveCleanupConfig(
+        _cleanup.copyWith(retentionDays: days),
+      );
+      if (mounted) {
+        setState(() {
+          _cleanup = config;
+          _retentionController.text = config.retentionDays.toString();
+          _cleanupNotice = '自动清理设置已保存';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _cleanupNotice = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cleanupBusy = false);
+      }
+    }
+  }
+
+  Future<void> _saveAutoUpdate() async {
+    final time =
+        RegExp(
+          r'^([01]\d|2[0-3]):[0-5]\d$',
+        ).hasMatch(_dailyTimeController.text.trim())
+        ? _dailyTimeController.text.trim()
+        : '03:00';
+    setState(() {
+      _autoUpdateBusy = true;
+      _autoUpdateNotice = null;
+    });
+    try {
+      final config = await widget.api.saveAutoUpdateConfig(
+        _autoUpdate.copyWith(dailyTime: time),
+      );
+      if (mounted) {
+        setState(() {
+          _autoUpdate = config;
+          _dailyTimeController.text = config.dailyTime;
+          _autoUpdateNotice = '自动更新设置已保存';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _autoUpdateNotice = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _autoUpdateBusy = false);
+      }
+    }
+  }
+
+  Future<void> _runAutoUpdate() async {
+    setState(() {
+      _autoUpdateBusy = true;
+      _autoUpdateNotice = null;
+    });
+    try {
+      final response = await widget.api.runAutoUpdateNow();
+      final jobs = await widget.api.getJobs();
+      if (mounted) {
+        setState(() {
+          _autoUpdate = response.config;
+          _jobs = jobs;
+          _autoUpdateNotice =
+              '已检查 ${response.result.checked} 个任务，更新 ${response.result.updated} 个';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _autoUpdateNotice = error.toString());
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _autoUpdateBusy = false);
+      }
+    }
+  }
+
+  void _toggleAutoUpdateJob(String jobId, bool selected) {
+    final items = [..._autoUpdate.items];
+    final existing = items.where((item) => item.jobId == jobId).firstOrNull;
+    items.removeWhere((item) => item.jobId == jobId);
+    if (selected) {
+      items.add(existing ?? AutoUpdateItemModel(jobId: jobId));
+    }
+    setState(() => _autoUpdate = _autoUpdate.copyWith(items: items));
+  }
+
   Future<void> _changeServer(BuildContext context) async {
     final selected = await showDialog<String>(
       context: context,
       builder: (context) =>
-          ServerAddressDialog(initialValue: serverUri.toString()),
+          ServerAddressDialog(initialValue: widget.serverUri.toString()),
     );
     if (selected == null || !context.mounted) {
       return;
     }
     try {
-      await onChangeServer(selected);
+      await widget.onChangeServer(selected);
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(
@@ -1060,14 +1694,29 @@ class SettingsPage extends StatelessWidget {
       ),
     );
     if (confirmed == true) {
-      await onLogout();
+      await widget.onLogout();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final successfulJobs = _jobs
+        .where((job) => job.status == 'succeeded')
+        .toList();
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     return Scaffold(
-      appBar: AppBar(title: const Text('设置')),
+      appBar: AppBar(
+        title: const Text('设置'),
+        actions: [
+          IconButton(
+            tooltip: '刷新设置',
+            onPressed: () => unawaited(_load()),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
@@ -1076,10 +1725,169 @@ class SettingsPage extends StatelessWidget {
             child: ListTile(
               leading: const Icon(Icons.dns_outlined),
               title: const Text('服务器地址'),
-              subtitle: Text(serverUri.toString()),
+              subtitle: Text(widget.serverUri.toString()),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => _changeServer(context),
             ),
+          ),
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: 'WebDAV 上传',
+            icon: Icons.cloud_upload_outlined,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用 WebDAV'),
+                value: _webDav.enabled,
+                onChanged: (value) => setState(() {
+                  _webDav = _webDav.copyWith(enabled: value);
+                }),
+              ),
+              TextField(
+                controller: _webDavServerController,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(labelText: '服务地址'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _webDavUsernameController,
+                decoration: const InputDecoration(labelText: '用户名'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _webDavPasswordController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: '密码',
+                  hintText: _webDav.hasPassword ? '留空不修改已保存密码' : null,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _webDavPathController,
+                decoration: const InputDecoration(labelText: '基础目录'),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _webDavBusy ? null : _testWebDav,
+                    icon: const Icon(Icons.network_check),
+                    label: const Text('测试连接'),
+                  ),
+                  FilledButton.icon(
+                    onPressed: _webDavBusy ? null : _saveWebDav,
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('保存'),
+                  ),
+                  if (_webDav.hasPassword)
+                    TextButton(
+                      onPressed: _webDavBusy
+                          ? null
+                          : () => _saveWebDav(clearPassword: true),
+                      child: const Text('清空已保存密码'),
+                    ),
+                ],
+              ),
+              if (_webDavNotice != null) Text(_webDavNotice!),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: '自动清理',
+            icon: Icons.auto_delete_outlined,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用自动清理'),
+                value: _cleanup.enabled,
+                onChanged: (value) => setState(() {
+                  _cleanup = _cleanup.copyWith(enabled: value);
+                }),
+              ),
+              TextField(
+                controller: _retentionController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: '保留天数（1-365）'),
+              ),
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed: _cleanupBusy ? null : _saveCleanup,
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('保存自动清理'),
+              ),
+              if (_cleanupNotice != null) Text(_cleanupNotice!),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _SectionCard(
+            title: '自动更新',
+            icon: Icons.update,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用自动更新'),
+                value: _autoUpdate.enabled,
+                onChanged: (value) => setState(() {
+                  _autoUpdate = _autoUpdate.copyWith(enabled: value);
+                }),
+              ),
+              TextField(
+                controller: _dailyTimeController,
+                keyboardType: TextInputType.datetime,
+                decoration: const InputDecoration(
+                  labelText: '每日检查时间',
+                  hintText: '03:00',
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text('追更任务', style: TextStyle(fontWeight: FontWeight.w600)),
+              if (successfulJobs.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('暂无可追更的成功任务'),
+                ),
+              for (final job in successfulJobs)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _autoUpdate.items.any(
+                    (item) => item.jobId == job.id && item.enabled,
+                  ),
+                  onChanged: (value) =>
+                      _toggleAutoUpdateJob(job.id, value == true),
+                  title: Text('#${job.sourceId} ${job.title ?? '未命名任务'}'),
+                  subtitle: Text(
+                    _autoUpdate.items
+                            .where((item) => item.jobId == job.id)
+                            .firstOrNull
+                            ?.lastMessage ??
+                        '尚未检查',
+                  ),
+                ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _autoUpdateBusy ? null : _saveAutoUpdate,
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('保存'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _autoUpdateBusy || _autoUpdate.items.isEmpty
+                        ? null
+                        : _runAutoUpdate,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('立即检查'),
+                  ),
+                ],
+              ),
+              if (_autoUpdate.lastRunAt != null)
+                Text('上次运行：${_autoUpdate.lastRunAt}'),
+              if (_autoUpdateNotice != null) Text(_autoUpdateNotice!),
+            ],
           ),
           const SizedBox(height: 12),
           Card(
@@ -1167,6 +1975,16 @@ class _StatusChip extends StatelessWidget {
       visualDensity: VisualDensity.compact,
     );
   }
+}
+
+String _uploadStatusText(String status, String? error) {
+  return switch (status) {
+    'pending' => '等待上传',
+    'uploading' => '上传中',
+    'succeeded' => '上传成功',
+    'failed' => error?.isNotEmpty == true ? '失败：$error' : '上传失败',
+    _ => '未启用',
+  };
 }
 
 class _EmptyState extends StatelessWidget {
@@ -1452,4 +2270,8 @@ extension _TakeLast<T> on List<T> {
     }
     return sublist(length - count);
   }
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

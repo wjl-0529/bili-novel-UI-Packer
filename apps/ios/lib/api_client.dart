@@ -65,6 +65,43 @@ class ApiClient {
         .toList();
   }
 
+  Future<NovelPreviewResponseModel> previewNovel(
+    JobRequestModel request,
+  ) async {
+    final payload = await _request(
+      'POST',
+      '/api/novel/preview',
+      body: request.toJson(),
+    );
+    final rawPreviews = payload['previews'];
+    final rawFailures = payload['previewFailures'];
+    final previews = <NovelPreviewModel>[];
+    if (rawPreviews is List) {
+      previews.addAll(
+        rawPreviews.whereType<Map>().map(
+          (item) => NovelPreviewModel.fromJson(Map<String, dynamic>.from(item)),
+        ),
+      );
+    } else if (payload['preview'] is Map) {
+      previews.add(
+        NovelPreviewModel.fromJson(
+          Map<String, dynamic>.from(payload['preview'] as Map),
+        ),
+      );
+    }
+    final failures = rawFailures is List
+        ? rawFailures
+              .whereType<Map>()
+              .map(
+                (item) => NovelPreviewFailureModel.fromJson(
+                  Map<String, dynamic>.from(item),
+                ),
+              )
+              .toList()
+        : const <NovelPreviewFailureModel>[];
+    return NovelPreviewResponseModel(previews: previews, failures: failures);
+  }
+
   Future<void> cancelJob(String id) async {
     await _request('POST', '/api/jobs/${Uri.encodeComponent(id)}/cancel');
   }
@@ -75,6 +112,130 @@ class ApiClient {
 
   Future<void> deleteJob(String id) async {
     await _request('DELETE', '/api/jobs/${Uri.encodeComponent(id)}');
+  }
+
+  Future<DownloadJobModel> deleteJobOutputs(String id) async {
+    final payload = await _request(
+      'DELETE',
+      '/api/jobs/${Uri.encodeComponent(id)}/outputs',
+    );
+    final job = payload['job'];
+    if (job is! Map) {
+      throw const ApiException(500, '服务器没有返回任务信息');
+    }
+    return DownloadJobModel.fromJson(Map<String, dynamic>.from(job));
+  }
+
+  Future<({int deleted, List<DownloadJobModel> jobs})>
+  cleanupCompletedJobs() async {
+    final payload = await _request('POST', '/api/jobs/cleanup');
+    final rawJobs = payload['jobs'];
+    final jobs = rawJobs is List
+        ? rawJobs
+              .whereType<Map>()
+              .map(
+                (job) =>
+                    DownloadJobModel.fromJson(Map<String, dynamic>.from(job)),
+              )
+              .toList()
+        : const <DownloadJobModel>[];
+    return (deleted: (payload['deleted'] as num?)?.toInt() ?? 0, jobs: jobs);
+  }
+
+  Future<WebDavConfigModel> getWebDavConfig() async {
+    final payload = await _request('GET', '/api/webdav/config');
+    return WebDavConfigModel.fromJson(
+      payload['config'] is Map
+          ? Map<String, dynamic>.from(payload['config'] as Map)
+          : null,
+    );
+  }
+
+  Future<WebDavConfigModel> saveWebDavConfig(
+    WebDavConfigModel config, {
+    bool clearPassword = false,
+  }) async {
+    final payload = await _request(
+      'PUT',
+      '/api/webdav/config',
+      body: config.toJson(clearPassword: clearPassword),
+    );
+    return WebDavConfigModel.fromJson(
+      payload['config'] is Map
+          ? Map<String, dynamic>.from(payload['config'] as Map)
+          : null,
+    );
+  }
+
+  Future<void> testWebDavConfig(WebDavConfigModel config) async {
+    await _request('POST', '/api/webdav/test', body: config.toJson());
+  }
+
+  Future<CleanupConfigModel> getCleanupConfig() async {
+    final payload = await _request('GET', '/api/cleanup/config');
+    return CleanupConfigModel.fromJson(
+      payload['config'] is Map
+          ? Map<String, dynamic>.from(payload['config'] as Map)
+          : null,
+    );
+  }
+
+  Future<CleanupConfigModel> saveCleanupConfig(
+    CleanupConfigModel config,
+  ) async {
+    final payload = await _request(
+      'PUT',
+      '/api/cleanup/config',
+      body: config.toJson(),
+    );
+    return CleanupConfigModel.fromJson(
+      payload['config'] is Map
+          ? Map<String, dynamic>.from(payload['config'] as Map)
+          : null,
+    );
+  }
+
+  Future<AutoUpdateConfigModel> getAutoUpdateConfig() async {
+    final payload = await _request('GET', '/api/auto-update/config');
+    return AutoUpdateConfigModel.fromJson(
+      payload['config'] is Map
+          ? Map<String, dynamic>.from(payload['config'] as Map)
+          : null,
+    );
+  }
+
+  Future<AutoUpdateConfigModel> saveAutoUpdateConfig(
+    AutoUpdateConfigModel config,
+  ) async {
+    final payload = await _request(
+      'PUT',
+      '/api/auto-update/config',
+      body: config.toJson(),
+    );
+    return AutoUpdateConfigModel.fromJson(
+      payload['config'] is Map
+          ? Map<String, dynamic>.from(payload['config'] as Map)
+          : null,
+    );
+  }
+
+  Future<({AutoUpdateConfigModel config, AutoUpdateRunResultModel result})>
+  runAutoUpdateNow() async {
+    final payload = await _request('POST', '/api/auto-update/run');
+    final result = payload['result'] is Map
+        ? Map<String, dynamic>.from(payload['result'] as Map)
+        : const <String, dynamic>{};
+    return (
+      config: AutoUpdateConfigModel.fromJson(
+        payload['config'] is Map
+            ? Map<String, dynamic>.from(payload['config'] as Map)
+            : null,
+      ),
+      result: AutoUpdateRunResultModel(
+        checked: (result['checked'] as num?)?.toInt() ?? 0,
+        updated: (result['updated'] as num?)?.toInt() ?? 0,
+      ),
+    );
   }
 
   Future<String> createNativeExport(String jobId, String fileName) async {
