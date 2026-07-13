@@ -320,7 +320,7 @@ Uri? normalizeServerUri(String value) {
       uri.userInfo.isNotEmpty) {
     return null;
   }
-  return uri.replace(path: '', query: null, fragment: null);
+  return uri.replace(path: '', query: '', fragment: '');
 }
 
 bool isRemoteOutputUri(Uri serverUri, Uri candidate) {
