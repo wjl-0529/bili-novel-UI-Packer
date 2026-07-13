@@ -1,0 +1,55 @@
+import 'package:bili_novel_packer_ios/native_models.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('job request serializes the server contract', () {
+    const request = JobRequestModel(
+      urlTemplate: 'https://www.bilinovel.com/novel/{id}.html',
+      rangeText: '1-3',
+      volumeRangeText: '1-2',
+      combineVolume: true,
+      addChapterTitle: true,
+    );
+
+    expect(request.toJson(), {
+      'urlTemplate': 'https://www.bilinovel.com/novel/{id}.html',
+      'rangeText': '1-3',
+      'volumeRangeText': '1-2',
+      'combineVolume': true,
+      'addChapterTitle': true,
+      'barkConfig': {
+        'enabled': false,
+        'serverUrl': 'https://api.day.app',
+        'deviceKey': '',
+        'events': {
+          'start': false,
+          'success': true,
+          'failure': true,
+          'progress': false,
+          'update': true,
+        },
+        'progressThrottleSeconds': 300,
+      },
+    });
+  });
+
+  test('download job parses progress, files, and logs', () {
+    final job = DownloadJobModel.fromJson({
+      'id': 'job-1',
+      'sourceId': 12,
+      'url': 'https://example.com/12',
+      'request': {'urlTemplate': 'https://example.com/{id}', 'rangeText': '12'},
+      'status': 'succeeded',
+      'progress': 1,
+      'message': '完成',
+      'createdAt': '2026-07-13T12:00:00.000Z',
+      'outputFiles': ['book.epub'],
+      'logs': ['done'],
+    });
+
+    expect(job.id, 'job-1');
+    expect(job.progress, 1);
+    expect(job.outputFiles, ['book.epub']);
+    expect(job.logs, ['done']);
+  });
+}
