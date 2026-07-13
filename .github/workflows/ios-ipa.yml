@@ -85,6 +85,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleName 轻小说打包器" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 仅用于连接应用内部的本地服务" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" ios/Runner/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" ios/Runner/Info.plist
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" ios/Runner/Info.plist
 
       - name: Verify Flutter app
