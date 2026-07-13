@@ -19,7 +19,7 @@ void main() {
       'addChapterTitle': true,
       'barkConfig': {
         'enabled': false,
-        'serverUrl': 'https://api.day.app',
+        'serverUrl': '',
         'deviceKey': '',
         'events': {
           'start': false,
