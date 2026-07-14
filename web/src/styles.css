@@ -150,6 +150,14 @@ input:focus {
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
 }
 
+button:focus-visible,
+a:focus-visible,
+tbody tr:focus-visible,
+.job-card:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, 0.28);
+  outline-offset: 2px;
+}
+
 .field-hint {
   color: var(--muted);
   font-size: 12px;
@@ -229,7 +237,7 @@ input:focus {
   height: 100dvh;
   max-width: 1800px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 14px;
   margin: 0 auto;
   overflow: hidden;
@@ -293,8 +301,9 @@ input:focus {
 .workspace {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(310px, 0.8fr) minmax(430px, 1.18fr) minmax(310px, 0.86fr);
-  grid-template-areas: "create queue side";
+  flex: 1 1 auto;
+  grid-template-columns: minmax(300px, 0.78fr) minmax(610px, 1.35fr) minmax(360px, 0.95fr);
+  grid-template-areas: "create queue detail";
   gap: 14px;
   overflow: hidden;
 }
@@ -342,16 +351,6 @@ input:focus {
   grid-area: queue;
 }
 
-.side-rail {
-  grid-area: side;
-  min-width: 0;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 14px;
-  overflow: hidden;
-}
-
 .panel-heading {
   flex: 0 0 auto;
   display: flex;
@@ -390,9 +389,7 @@ input:focus {
   flex: 0 0 auto;
 }
 
-.panel-scroll,
 .queue-scroll,
-.detail-scroll,
 .create-results-scroll {
   min-height: 0;
   overflow: auto;
@@ -400,13 +397,7 @@ input:focus {
   scrollbar-color: #b6c2d0 transparent;
 }
 
-.panel-scroll {
-  flex: 1 1 auto;
-  padding-right: 2px;
-}
-
-.queue-scroll,
-.detail-scroll {
+.queue-scroll {
   flex: 1 1 auto;
 }
 
@@ -1076,6 +1067,11 @@ td span {
   background: #eef2f7;
 }
 
+.status-badge.paused {
+  color: #7b4d14;
+  background: var(--amber-soft);
+}
+
 .status-badge.running {
   color: var(--teal-dark);
   background: var(--teal-soft);
@@ -1283,6 +1279,7 @@ td span {
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+  user-select: text;
 }
 
 .storage-card p {
@@ -1448,6 +1445,7 @@ td span {
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
+  user-select: text;
 }
 
 .empty-state {
@@ -1642,10 +1640,6 @@ td span {
   }
 }
 
-.app-shell {
-  grid-template-rows: auto minmax(0, 1fr) auto;
-}
-
 .desktop-surface,
 .mobile-surface {
   min-width: 0;
@@ -1667,12 +1661,6 @@ td span {
   color: var(--teal-dark);
   border-color: #8fc8c0;
   background: var(--teal-soft);
-}
-
-.workspace {
-  flex: 1 1 auto;
-  grid-template-columns: minmax(300px, 0.78fr) minmax(610px, 1.35fr) minmax(360px, 0.95fr);
-  grid-template-areas: "create queue detail";
 }
 
 .workspace table {

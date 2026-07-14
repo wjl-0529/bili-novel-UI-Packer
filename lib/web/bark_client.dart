@@ -28,12 +28,12 @@ class BarkEvents {
   }
 
   Map<String, dynamic> toJson() => {
-        "start": start,
-        "success": success,
-        "failure": failure,
-        "progress": progress,
-        "update": update,
-      };
+    "start": start,
+    "success": success,
+    "failure": failure,
+    "progress": progress,
+    "update": update,
+  };
 
   bool allows(String event) {
     return switch (event) {
@@ -56,7 +56,7 @@ class BarkConfig {
 
   const BarkConfig({
     this.enabled = false,
-    this.serverUrl = "https://api.day.app",
+    this.serverUrl = "",
     this.deviceKey = "",
     this.events = const BarkEvents(),
     this.progressThrottleSeconds = 300,
@@ -68,9 +68,7 @@ class BarkConfig {
     }
     return BarkConfig(
       enabled: json["enabled"] == true,
-      serverUrl: (json["serverUrl"] as String?)?.trim().isNotEmpty == true
-          ? (json["serverUrl"] as String).trim()
-          : "https://api.day.app",
+      serverUrl: (json["serverUrl"] as String?)?.trim() ?? "",
       deviceKey: (json["deviceKey"] as String?)?.trim() ?? "",
       events: BarkEvents.fromJson(json["events"] as Map<String, dynamic>?),
       progressThrottleSeconds:
@@ -79,18 +77,20 @@ class BarkConfig {
   }
 
   Map<String, dynamic> toJson() => {
-        "enabled": enabled,
-        "serverUrl": serverUrl,
-        "deviceKey": deviceKey,
-        "events": events.toJson(),
-        "progressThrottleSeconds": progressThrottleSeconds,
-      };
+    "enabled": enabled,
+    "serverUrl": serverUrl,
+    "deviceKey": deviceKey,
+    "events": events.toJson(),
+    "progressThrottleSeconds": progressThrottleSeconds,
+  };
 }
 
 class BarkClient {
   final http.Client _client;
 
   BarkClient({http.Client? client}) : _client = client ?? http.Client();
+
+  void close() => _client.close();
 
   Future<bool> notify({
     required BarkConfig config,
@@ -107,8 +107,9 @@ class BarkClient {
     final serverUrl = config.serverUrl.endsWith("/")
         ? config.serverUrl
         : "${config.serverUrl}/";
-    final uri =
-        Uri.parse(serverUrl).resolve(Uri.encodeComponent(config.deviceKey));
+    final uri = Uri.parse(
+      serverUrl,
+    ).resolve(Uri.encodeComponent(config.deviceKey));
 
     try {
       final response = await _client

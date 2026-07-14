@@ -16,12 +16,23 @@ include: package:lints/recommended.yaml
 # Uncomment the following section to specify additional rules.
 
 linter:
- rules:
-   - always_use_package_imports
+  rules:
+    - always_use_package_imports
+    - avoid_void_async
+    - cancel_subscriptions
+    - close_sinks
+    - no_duplicate_case_values
+    - no_literal_bool_comparisons
+    - unawaited_futures
+    - unnecessary_statements
 
-# analyzer:
-#   exclude:
-#     - path/to/excluded/files/**
+formatter:
+  trailing_commas: preserve
+
+analyzer:
+  # The nested Flutter package is analyzed separately with Flutter's SDK.
+  exclude:
+    - apps/ios/**
 
 # For more information about the core and recommended set of lints, see
 # https://dart.dev/go/core-lints

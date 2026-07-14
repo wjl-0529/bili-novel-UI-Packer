@@ -6,23 +6,74 @@ import type {
   JobRequest,
   NovelPreview,
   NovelPreviewFailure,
+  RuntimeInfo,
   WebDavConfig,
 } from "./types";
 
+export class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+const unauthorizedListeners = new Set<() => void>();
+
+export function subscribeUnauthorized(listener: () => void) {
+  unauthorizedListeners.add(listener);
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
+}
+
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    credentials: "same-origin",
-    headers: {
-      "content-type": "application/json",
-      ...options.headers,
-    },
-    ...options,
-  });
+  const headers = new Headers(options.headers);
+  if (options.body !== undefined && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      credentials: "same-origin",
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new Error("无法连接服务器，请检查服务是否正在运行");
+  }
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data: unknown = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (response.ok) {
+        throw new HttpError(response.status, "服务器返回了无法解析的数据");
+      }
+      data = { message: text.trim() };
+    }
+  }
   if (!response.ok) {
-    throw new Error(data.message ?? `请求失败：${response.status}`);
+    const message =
+      typeof data === "object" &&
+      data !== null &&
+      "message" in data &&
+      typeof data.message === "string"
+        ? data.message
+        : `请求失败：${response.status}`;
+    const error = new HttpError(
+      response.status,
+      message,
+    );
+    if (response.status === 401 && url !== "/api/login") {
+      unauthorizedListeners.forEach((listener) => listener());
+    }
+    throw error;
   }
   return data as T;
 }
@@ -40,6 +91,10 @@ export function logout() {
 
 export function me() {
   return request<{ authenticated: boolean }>("/api/me");
+}
+
+export function getRuntime() {
+  return request<RuntimeInfo>("/api/runtime");
 }
 
 export function getJobs() {

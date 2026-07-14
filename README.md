@@ -62,6 +62,20 @@ dart compile exe bin/main.dart -o ./build/bili_novel_packer
 dart compile exe bin/server.dart -o ./build/bili_novel_packer_server
 ```
 
+## iOS IPA（未签名）
+
+仓库的 `Build unsigned iOS IPA` GitHub Actions 会在 macOS runner 上构建 iPhone/iPad 安装包。`codex/ios-ipa`、`main` 分支的构建结果保存在 Actions Artifact 中 30 天；推送 `v*-ios*` 标签时，IPA 还会附加到对应的 GitHub 预发布版本。
+
+该 IPA **没有 Apple 签名，不能直接点击安装**。安装时任选一种方式：
+
+1. 在电脑上安装 AltStore 或 Sideloadly，或在设备上配置 SideStore。
+2. 下载 Actions/Release 中名称以 `bili-novel-packer-ios-unsigned-` 开头的 IPA。
+3. 在侧载工具中选择 IPA，使用自己的 Apple ID 完成重签并安装。
+
+免费 Apple ID 的签名通常需要周期性刷新，具体周期以所用侧载工具和 Apple 当前规则为准。iOS App 首次打开时需要手动填写服务器地址，地址仅保存在设备本地，仓库和 IPA 不内置服务器、账号或密码。下载与 EPUB 打包任务在服务器持续执行，关闭 App 不会中断任务；重新打开后会恢复任务列表和实时进度。EPUB 生成后点击文件名会保存到 App 的 Documents 目录，并可继续通过系统分享面板保存到“文件”、AirDrop 或其他阅读器。
+
+如后续提供付费 Apple Developer 证书和匹配 `com.bilinovelpacker.ios` 的描述文件，可以另加 Ad Hoc 或 TestFlight 签名工作流。
+
 ## 常见问题
 
 ### 为什么下载速度比较慢？

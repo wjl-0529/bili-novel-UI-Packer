@@ -3,7 +3,7 @@ import 'package:bili_novel_packer/util/sequence.dart';
 import 'package:xml/xml.dart';
 
 /// toc.ncx
-class EpubNavigator implements EpubNode {
+class EpubNavigatorNcx implements EpubNode {
   final XmlBuilder _builder = XmlBuilder();
   late final _Head _head;
   late final _DocTitle _docTitle;
@@ -17,7 +17,7 @@ class EpubNavigator implements EpubNode {
 
   set bookUuid(String bookUuid) => _head.bookUuid = bookUuid;
 
-  EpubNavigator() {
+  EpubNavigatorNcx() {
     _head = _Head(_builder);
     _docTitle = _DocTitle(_builder);
     _navMap = _NavMap(_builder);
@@ -103,9 +103,12 @@ class _DocTitle extends EpubChildNode {
 
   @override
   void build() {
-    builder.element("docTitle", nest: () {
-      builder.element("text", nest: docTitle);
-    });
+    builder.element(
+      "docTitle",
+      nest: () {
+        builder.element("text", nest: docTitle);
+      },
+    );
   }
 }
 
@@ -121,13 +124,16 @@ class _NavMap extends EpubChildNode {
 
   @override
   void build() {
-    builder.element("navMap", nest: () {
-      for (int i = 0; i < _navPointList.length; i++) {
-        NavPoint navPoint = _navPointList[i];
-        String id = "navPoint-${_seq.next}";
-        _navPoint(navPoint, id);
-      }
-    });
+    builder.element(
+      "navMap",
+      nest: () {
+        for (int i = 0; i < _navPointList.length; i++) {
+          NavPoint navPoint = _navPointList[i];
+          String id = "navPoint-${_seq.next}";
+          _navPoint(navPoint, id);
+        }
+      },
+    );
   }
 
   void _navPoint(NavPoint navPoint, String id) {
@@ -149,9 +155,12 @@ class _NavMap extends EpubChildNode {
   }
 
   void navLabel(String title) {
-    builder.element("navLabel", nest: () {
-      builder.element("text", nest: title);
-    });
+    builder.element(
+      "navLabel",
+      nest: () {
+        builder.element("text", nest: title);
+      },
+    );
   }
 
   void content(String src) {

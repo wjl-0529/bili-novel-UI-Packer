@@ -24,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, MouseEvent, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import {
   cancelJob,
   cleanupCompletedJobs,
@@ -35,6 +35,7 @@ import {
   getAutoUpdateConfig,
   getCleanupConfig,
   getJobs,
+  getRuntime,
   getWebDavConfig,
   login,
   logout,
@@ -45,6 +46,7 @@ import {
   saveAutoUpdateConfig,
   saveCleanupConfig,
   saveWebDavConfig,
+  subscribeUnauthorized,
   testWebDavConfig,
 } from "./api";
 import type {
@@ -58,6 +60,7 @@ import type {
   JobStatus,
   NovelPreview,
   NovelPreviewFailure,
+  RuntimeInfo,
   WebDavConfig,
 } from "./types";
 
@@ -91,7 +94,7 @@ const barkStorageKey = "bili-novel-packer:bark-config";
 
 const defaultBark: BarkConfig = {
   enabled: false,
-  serverUrl: "https://api.day.app",
+  serverUrl: "",
   deviceKey: "",
   events: {
     start: false,
@@ -108,7 +111,7 @@ const defaultWebDavConfig: WebDavConfig = {
   serverUrl: "",
   username: "",
   password: "",
-  basePath: "/小说/轻小说打包器",
+  basePath: "",
   hasPassword: false,
 };
 
@@ -125,7 +128,7 @@ const defaultAutoUpdateConfig: AutoUpdateConfig = {
 
 const defaultRequest: JobRequest = {
   urlTemplate: "https://www.bilinovel.com/novel/{id}.html",
-  rangeText: "1-3",
+  rangeText: "",
   volumeRangeText: "",
   combineVolume: false,
   addChapterTitle: false,
@@ -141,6 +144,10 @@ function createDefaultRequest(): JobRequest {
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo>({
+    embedded: false,
+    platform: null,
+  });
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [appView, setAppView] = useState<AppView>("workspace");
@@ -170,6 +177,16 @@ export function App() {
   const [actionJobIds, setActionJobIds] = useState<Set<string>>(() => new Set());
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
   const preferredSelectedJobId = useRef<string | null>(null);
+
+  const clearLocalSession = useCallback(() => {
+    preferredSelectedJobId.current = null;
+    setAuthenticated(false);
+    setJobs([]);
+    setSelectedJobId(null);
+    setAutoUpdateConfig(defaultAutoUpdateConfig);
+    setAppView("workspace");
+    setMobileTab("download");
+  }, []);
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.id === selectedJobId) ?? jobs[0],
@@ -263,20 +280,43 @@ export function App() {
     });
   }, []);
 
+  useEffect(() => subscribeUnauthorized(clearLocalSession), [clearLocalSession]);
+
   useEffect(() => {
-    me()
-      .then((response) => {
-        setAuthenticated(response.authenticated);
-        if (response.authenticated) {
-          return Promise.all([
-            refreshJobs(),
-            refreshWebDavConfig(),
-            refreshCleanupConfig(),
-            refreshAutoUpdateConfig(),
-          ]);
+    let active = true;
+
+    const initialize = async () => {
+      try {
+        const runtime = await getRuntime();
+        if (!active) {
+          return;
         }
-      })
-      .catch(() => setAuthenticated(false));
+        setRuntimeInfo(runtime);
+        const response = await me();
+        if (!active) {
+          return;
+        }
+        setAuthenticated(response.authenticated);
+        if (!response.authenticated) {
+          return;
+        }
+        await Promise.allSettled([
+          refreshJobs(),
+          refreshWebDavConfig(),
+          refreshCleanupConfig(),
+          refreshAutoUpdateConfig(),
+        ]);
+      } catch {
+        if (active) {
+          setAuthenticated(false);
+        }
+      }
+    };
+
+    void initialize();
+    return () => {
+      active = false;
+    };
   }, [refreshJobs, refreshWebDavConfig, refreshCleanupConfig, refreshAutoUpdateConfig]);
 
   useEffect(() => {
@@ -292,6 +332,9 @@ export function App() {
     const source = new EventSource("/api/events");
     let lastRealtimeEventAt = Date.now();
     let fallbackTimer: number | undefined;
+    let fallbackPollInFlight = false;
+    let realtimeRevision = 0;
+    let disposed = false;
     const fallbackIntervalMs = 1500;
     const staleRealtimeMs = 8000;
 
@@ -302,13 +345,31 @@ export function App() {
       }
     };
 
-    const startFallback = () => {
-      if (fallbackTimer !== undefined) {
+    const pollFallback = async () => {
+      if (disposed || fallbackPollInFlight) {
         return;
       }
-      void refreshJobs().catch(() => undefined);
+      fallbackPollInFlight = true;
+      const revisionAtStart = realtimeRevision;
+      try {
+        const response = await getJobs();
+        if (!disposed && revisionAtStart === realtimeRevision) {
+          applyJobsSnapshot(response.jobs);
+        }
+      } catch {
+        // A 401 is handled by subscribeUnauthorized; other failures retry later.
+      } finally {
+        fallbackPollInFlight = false;
+      }
+    };
+
+    const startFallback = () => {
+      if (disposed || fallbackTimer !== undefined) {
+        return;
+      }
+      void pollFallback();
       fallbackTimer = window.setInterval(() => {
-        void refreshJobs().catch(() => undefined);
+        void pollFallback();
       }, fallbackIntervalMs);
     };
 
@@ -320,6 +381,7 @@ export function App() {
     }, 3000);
 
     source.onopen = () => {
+      realtimeRevision += 1;
       lastRealtimeEventAt = Date.now();
       setRealtimeState("connected");
       stopFallback();
@@ -333,6 +395,7 @@ export function App() {
     source.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as EventMessage;
+        realtimeRevision += 1;
         lastRealtimeEventAt = Date.now();
         setRealtimeState("connected");
         stopFallback();
@@ -356,11 +419,12 @@ export function App() {
     };
 
     return () => {
+      disposed = true;
       window.clearInterval(watchdogTimer);
       stopFallback();
       source.close();
     };
-  }, [authenticated, applyJobsSnapshot, refreshJobs]);
+  }, [authenticated, applyJobsSnapshot]);
 
   useEffect(() => {
     const preferred = preferredSelectedJobId.current;
@@ -398,13 +462,13 @@ export function App() {
   }
 
   async function handleLogout() {
-    await logout();
-    setAuthenticated(false);
-    setJobs([]);
-    setSelectedJobId(null);
-    setAutoUpdateConfig(defaultAutoUpdateConfig);
-    setAppView("workspace");
-    setMobileTab("download");
+    try {
+      await logout();
+    } catch {
+      // Local logout must still work when the session has expired or the server is offline.
+    } finally {
+      clearLocalSession();
+    }
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -546,6 +610,16 @@ export function App() {
   }
 
   async function handleDelete(job: DownloadJob) {
+    const outputHint =
+      job.outputFiles.length > 0
+        ? `，并删除 ${job.outputFiles.length} 个输出文件`
+        : "";
+    const ok = window.confirm(
+      `删除任务 #${job.sourceId}${outputHint}？此操作无法撤销。`,
+    );
+    if (!ok) {
+      return;
+    }
     setNotice("");
     markAction(job.id, true);
     removeJobFromState(job.id);
@@ -736,6 +810,23 @@ export function App() {
   }
 
   if (!authenticated) {
+    if (runtimeInfo.embedded) {
+      return (
+        <main className="login-shell">
+          <section className="login-panel">
+            <div className="brand-mark">
+              <ShieldCheck size={30} />
+            </div>
+            <h1>本地会话初始化失败</h1>
+            <p>请重新载入应用以创建新的安全会话。</p>
+            <button className="primary-button" onClick={() => window.location.reload()}>
+              <RotateCcw size={17} />
+              重新载入
+            </button>
+          </section>
+        </main>
+      );
+    }
     return (
       <main className="login-shell">
         <form className="login-panel" onSubmit={handleLogin}>
@@ -770,6 +861,7 @@ export function App() {
     <main className="app-shell">
       <Topbar
         stats={stats}
+        embedded={runtimeInfo.embedded}
         activeView={appView}
         onShowWorkspace={() => setAppView("workspace")}
         onShowSettings={() => {
@@ -807,6 +899,7 @@ export function App() {
           />
         ) : (
           <WorkspaceView
+            embedded={runtimeInfo.embedded}
             request={request}
             busy={busy}
             previewBusy={previewBusy}
@@ -845,6 +938,7 @@ export function App() {
       <section className="mobile-surface" aria-label="轻小说打包器手机工作区">
         <MobileTabPanel
           activeTab={mobileTab}
+          embedded={runtimeInfo.embedded}
           request={request}
           busy={busy}
           previewBusy={previewBusy}
@@ -905,12 +999,14 @@ export function App() {
 
 function Topbar({
   stats,
+  embedded,
   activeView,
   onShowWorkspace,
   onShowSettings,
   onLogout,
 }: {
   stats: JobStats;
+  embedded: boolean;
   activeView: AppView;
   onShowWorkspace: () => void;
   onShowSettings: () => void;
@@ -945,16 +1041,19 @@ function Topbar({
           <Settings size={17} />
           设置
         </button>
-        <button className="ghost-button" onClick={onLogout}>
-          <LogOut size={17} />
-          退出
-        </button>
+        {!embedded ? (
+          <button className="ghost-button" onClick={onLogout}>
+            <LogOut size={17} />
+            退出
+          </button>
+        ) : null}
       </div>
     </header>
   );
 }
 
 type WorkspaceViewProps = {
+  embedded: boolean;
   request: JobRequest;
   busy: boolean;
   previewBusy: boolean;
@@ -989,6 +1088,7 @@ type WorkspaceViewProps = {
 };
 
 function WorkspaceView({
+  embedded,
   request,
   busy,
   previewBusy,
@@ -1061,6 +1161,7 @@ function WorkspaceView({
 
       <JobDetail
         job={selectedJob}
+        embedded={embedded}
         busy={selectedJob ? actionJobIds.has(selectedJob.id) : false}
         webDavEnabled={webDavEnabled}
         onDeleteOutputs={onDeleteOutputs}
@@ -1226,6 +1327,7 @@ function MobileTabPanel({
     return (
       <JobDetail
         job={props.selectedJob}
+        embedded={props.embedded}
         busy={props.selectedJob ? props.actionJobIds.has(props.selectedJob.id) : false}
         webDavEnabled={props.webDavEnabled}
         onDeleteOutputs={props.onDeleteOutputs}
@@ -1856,7 +1958,7 @@ function WebDavPanel({
           <input
             value={config.basePath}
             onChange={(event) => updateConfig({ basePath: event.target.value })}
-            placeholder="/小说/轻小说打包器"
+            placeholder="可选"
           />
         </label>
         <div className="webdav-actions">
@@ -1887,11 +1989,13 @@ function WebDavPanel({
 
 function JobDetail({
   job,
+  embedded,
   busy,
   webDavEnabled,
   onDeleteOutputs,
 }: {
   job?: DownloadJob;
+  embedded: boolean;
   busy: boolean;
   webDavEnabled: boolean;
   onDeleteOutputs: (job: DownloadJob) => Promise<void>;
@@ -1944,7 +2048,11 @@ function JobDetail({
           <div>
             <span>保存位置</span>
             <strong title={outputDir}>{outputDir}</strong>
-            <p>Docker 本地默认映射到 ./data/outputs/{job.id}</p>
+            <p>
+              {embedded
+                ? "文件保存在 App 沙箱；长任务请保持应用在前台，完成后点文件名分享到“文件”或阅读器。"
+                : `Docker 本地默认映射到 ./data/outputs/${job.id}`}
+            </p>
           </div>
           <button
             className="ghost-button"
@@ -2246,12 +2354,20 @@ function JobRow({
   onRetry: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const terminal = ["succeeded", "failed", "canceled", "canceling"].includes(job.status);
+  const terminal = ["succeeded", "failed", "canceled", "canceling", "paused"].includes(
+    job.status,
+  );
   const canCancel = !terminal;
   const progress = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
 
   return (
-    <tr className={selected ? "selected-row" : ""} onClick={onSelect}>
+    <tr
+      className={selected ? "selected-row" : ""}
+      tabIndex={0}
+      aria-selected={selected}
+      onClick={onSelect}
+      onKeyDown={(event) => runSelectKey(event, onSelect)}
+    >
       <td className="id-cell">#{job.sourceId}</td>
       <td>
         <strong>{job.title ?? "等待加载"}</strong>
@@ -2281,6 +2397,7 @@ function JobRow({
           {!terminal ? (
             <button
               title="取消任务"
+              aria-label={`取消任务 #${job.sourceId}`}
               disabled={busy || !canCancel}
               onClick={(event) => runRowAction(event, onCancel)}
             >
@@ -2291,27 +2408,43 @@ function JobRow({
               )}
             </button>
           ) : null}
-          {job.status === "failed" || job.status === "canceled" ? (
+          {job.status === "failed" || job.status === "canceled" || job.status === "paused" ? (
             <button
-              title="重试"
+              title={job.status === "paused" ? "重新开始任务" : "重试"}
+              aria-label={`${job.status === "paused" ? "重新开始" : "重试"}任务 #${job.sourceId}`}
               disabled={busy}
               onClick={(event) => runRowAction(event, onRetry)}
             >
-              {busy ? <Loader2 className="spin-icon" size={16} /> : <RotateCcw size={16} />}
+              {busy ? (
+                <Loader2 className="spin-icon" size={16} />
+              ) : job.status === "paused" ? (
+                <Play size={16} />
+              ) : (
+                <RotateCcw size={16} />
+              )}
             </button>
           ) : null}
           {job.outputFiles.length === 1 ? (
-            <a title={job.outputFiles[0]} href={fileUrl(job.id, job.outputFiles[0])}>
+            <a
+              title={job.outputFiles[0]}
+              aria-label={`下载 ${job.outputFiles[0]}`}
+              href={fileUrl(job.id, job.outputFiles[0])}
+            >
               <Download size={16} />
             </a>
           ) : null}
           {job.outputFiles.length > 1 ? (
-            <button title="在详情中选择文件" onClick={(event) => runRowAction(event, onSelect)}>
+            <button
+              title="在详情中选择文件"
+              aria-label={`查看任务 #${job.sourceId} 的输出文件`}
+              onClick={(event) => runRowAction(event, onSelect)}
+            >
               <FileText size={16} />
             </button>
           ) : null}
           <button
             title="删除任务"
+            aria-label={`删除任务 #${job.sourceId}`}
             disabled={busy}
             onClick={(event) => runRowAction(event, onDelete)}
           >
@@ -2352,11 +2485,19 @@ function JobCard({
   onRetry: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const terminal = ["succeeded", "failed", "canceled", "canceling"].includes(job.status);
+  const terminal = ["succeeded", "failed", "canceled", "canceling", "paused"].includes(
+    job.status,
+  );
   const progress = Math.max(0, Math.min(100, Math.round(job.progress * 100)));
 
   return (
-    <article className={`job-card ${selected ? "selected" : ""}`} onClick={onSelect}>
+    <article
+      className={`job-card ${selected ? "selected" : ""}`}
+      tabIndex={0}
+      aria-current={selected ? "true" : undefined}
+      onClick={onSelect}
+      onKeyDown={(event) => runSelectKey(event, onSelect)}
+    >
       <div className="job-card-main">
         <span className="id-cell">#{job.sourceId}</span>
         <div>
@@ -2381,33 +2522,51 @@ function JobCard({
         {!terminal ? (
           <button
             title="取消任务"
+            aria-label={`取消任务 #${job.sourceId}`}
             disabled={busy}
             onClick={(event) => runRowAction(event, onCancel)}
           >
             {busy ? <Loader2 className="spin-icon" size={16} /> : <StopCircle size={16} />}
           </button>
         ) : null}
-        {job.status === "failed" || job.status === "canceled" ? (
+        {job.status === "failed" || job.status === "canceled" || job.status === "paused" ? (
           <button
-            title="重试"
+            title={job.status === "paused" ? "重新开始任务" : "重试"}
+            aria-label={`${job.status === "paused" ? "重新开始" : "重试"}任务 #${job.sourceId}`}
             disabled={busy}
             onClick={(event) => runRowAction(event, onRetry)}
           >
-            {busy ? <Loader2 className="spin-icon" size={16} /> : <RotateCcw size={16} />}
+            {busy ? (
+              <Loader2 className="spin-icon" size={16} />
+            ) : job.status === "paused" ? (
+              <Play size={16} />
+            ) : (
+              <RotateCcw size={16} />
+            )}
           </button>
         ) : null}
         {job.outputFiles.length === 1 ? (
-          <a title={job.outputFiles[0]} href={fileUrl(job.id, job.outputFiles[0])} onClick={(event) => event.stopPropagation()}>
+          <a
+            title={job.outputFiles[0]}
+            aria-label={`下载 ${job.outputFiles[0]}`}
+            href={fileUrl(job.id, job.outputFiles[0])}
+            onClick={(event) => event.stopPropagation()}
+          >
             <Download size={16} />
           </a>
         ) : null}
         {job.outputFiles.length > 1 ? (
-          <button title="在详情中选择文件" onClick={(event) => runRowAction(event, onSelect)}>
+          <button
+            title="在详情中选择文件"
+            aria-label={`查看任务 #${job.sourceId} 的输出文件`}
+            onClick={(event) => runRowAction(event, onSelect)}
+          >
             <FileText size={16} />
           </button>
         ) : null}
         <button
           title="删除任务"
+          aria-label={`删除任务 #${job.sourceId}`}
           disabled={busy}
           onClick={(event) => runRowAction(event, onDelete)}
         >
@@ -2421,6 +2580,17 @@ function JobCard({
 function runRowAction(event: MouseEvent, action: () => void | Promise<void>) {
   event.stopPropagation();
   void action();
+}
+
+function runSelectKey(event: KeyboardEvent<HTMLElement>, action: () => void) {
+  if (event.currentTarget !== event.target) {
+    return;
+  }
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  event.preventDefault();
+  action();
 }
 
 function Toggle({
@@ -2655,6 +2825,7 @@ const realtimeText: Record<RealtimeState, string> = {
 const statusText: Record<JobStatus, string> = {
   queued: "排队",
   running: "运行",
+  paused: "已暂停",
   canceling: "已取消",
   succeeded: "完成",
   failed: "失败",
@@ -2673,6 +2844,7 @@ const uploadStatusText: Record<UploadDisplayStatus, string> = {
 const statusIcons: Record<JobStatus, LucideIcon> = {
   queued: Clock3,
   running: Loader2,
+  paused: Clock3,
   canceling: StopCircle,
   succeeded: CheckCircle2,
   failed: XCircle,

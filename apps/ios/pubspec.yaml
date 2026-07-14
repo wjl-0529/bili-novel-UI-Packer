@@ -1,0 +1,23 @@
+name: bili_novel_packer_ios
+description: 轻小说打包器原生 iOS 客户端
+publish_to: none
+version: 0.2.55+1
+
+environment:
+  sdk: '>=3.11.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_secure_storage: ^10.3.1
+  local_auth: ^3.0.2
+  path_provider: ^2.1.6
+  share_plus: ^13.2.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

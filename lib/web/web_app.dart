@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:bili_novel_packer/light_novel/base/light_novel_model.dart';
+import 'package:bili_novel_packer/light_novel/bili_novel/bili_novel_source.dart';
+import 'package:bili_novel_packer/light_novel/wenku_novel/wenku_novel_source.dart';
 import 'package:bili_novel_packer/novel_packer.dart';
+import 'package:bili_novel_packer/util/http_util.dart';
 import 'package:bili_novel_packer/web/auto_update_config.dart';
 import 'package:bili_novel_packer/web/auto_update_service.dart';
 import 'package:bili_novel_packer/web/cleanup_config.dart';
@@ -14,6 +18,7 @@ import 'package:bili_novel_packer/web/job_store.dart';
 import 'package:bili_novel_packer/web/range_parser.dart';
 import 'package:bili_novel_packer/web/session_store.dart';
 import 'package:bili_novel_packer/web/webdav.dart';
+import 'package:path/path.dart' as path;
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf_router/shelf_router.dart';
@@ -33,6 +38,13 @@ class WebApp {
   final CleanupConfigStore cleanupConfigStore;
   final AutoUpdateConfigStore autoUpdateConfigStore;
   final AutoUpdateService autoUpdateService;
+  final String? embeddedPlatform;
+  final String? nativeBootstrapToken;
+  final DateTime? nativeBootstrapExpiresAt;
+  bool _nativeBootstrapConsumed = false;
+  final Map<String, _NativeExport> _nativeExports = {};
+  final Map<String, _NovelCover> _novelCovers = {};
+  final Random _nativeExportRandom = Random.secure();
 
   WebApp({
     required this.store,
@@ -45,16 +57,24 @@ class WebApp {
     required this.cleanupConfigStore,
     required this.autoUpdateConfigStore,
     required this.autoUpdateService,
+    this.embeddedPlatform,
+    this.nativeBootstrapToken,
+    this.nativeBootstrapExpiresAt,
   });
 
   Handler get handler {
     final router = Router()
+      ..get("/api/runtime", _runtime)
+      ..post("/api/native/bootstrap", _nativeBootstrap)
+      ..post("/api/native/exports", _createNativeExport)
+      ..get("/api/native/exports/<token>", _downloadNativeExport)
       ..post("/api/login", _login)
       ..post("/api/logout", _logout)
       ..get("/api/me", _me)
       ..get("/api/jobs", _jobs)
       ..post("/api/jobs", _createJobs)
       ..post("/api/novel/preview", _previewNovel)
+      ..get("/api/novel/covers/<token>", _downloadNovelCover)
       ..get("/api/webdav/config", _webDavConfig)
       ..put("/api/webdav/config", _saveWebDavConfig)
       ..post("/api/webdav/test", _testWebDavConfig)
@@ -76,14 +96,77 @@ class WebApp {
     final staticHandler = staticDir.existsSync()
         ? createStaticHandler(webRoot, defaultDocument: "index.html")
         : (Request request) => Response.notFound(
-              "Web 控制台还没有构建，请先运行 npm install && npm run build。",
-            );
+            "Web 控制台还没有构建，请先运行 npm install && npm run build。",
+          );
     router.mount("/", staticHandler);
 
     return const Pipeline()
         .addMiddleware(logRequests())
         .addMiddleware(_authMiddleware)
         .addHandler(router.call);
+  }
+
+  Response _runtime(Request request) {
+    return _json({
+      "embedded": embeddedPlatform != null,
+      "platform": embeddedPlatform,
+    });
+  }
+
+  Response _nativeBootstrap(Request request) {
+    if (embeddedPlatform == null || nativeBootstrapToken == null) {
+      return _json({"message": "Native bootstrap is unavailable"}, status: 404);
+    }
+    final authorization = request.headers["authorization"] ?? "";
+    final expected = "Bearer $nativeBootstrapToken";
+    final expired =
+        nativeBootstrapExpiresAt == null ||
+        DateTime.now().isAfter(nativeBootstrapExpiresAt!);
+    if (_nativeBootstrapConsumed || expired || authorization != expected) {
+      return _json({
+        "message": "Native bootstrap token is invalid",
+      }, status: 401);
+    }
+    _nativeBootstrapConsumed = true;
+    final sessionToken = sessions.create();
+    return Response.found(
+      "/",
+      headers: {"set-cookie": sessions.loginCookie(sessionToken)},
+    );
+  }
+
+  Future<Response> _createNativeExport(Request request) async {
+    final payload = await _readJson(request);
+    final jobId = (payload["jobId"] as String?)?.trim() ?? "";
+    final fileName = (payload["fileName"] as String?)?.trim() ?? "";
+    final output = _resolveOutputFile(jobId, fileName);
+    if (output == null) {
+      return _json({"message": "文件不存在或已被清理"}, status: 404);
+    }
+    _removeExpiredNativeExports();
+    final token = _randomNativeExportToken();
+    _nativeExports[token] = _NativeExport(
+      jobId: jobId,
+      fileName: fileName,
+      expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+    );
+    return _json({
+      "url": "/api/native/exports/$token",
+      "fileName": fileName,
+      "expiresIn": 60,
+    }, status: 201);
+  }
+
+  Response _downloadNativeExport(Request request, String token) {
+    final export = _nativeExports.remove(token);
+    if (export == null || DateTime.now().isAfter(export.expiresAt)) {
+      return _json({"message": "导出链接已失效"}, status: 404);
+    }
+    final output = _resolveOutputFile(export.jobId, export.fileName);
+    if (output == null) {
+      return _json({"message": "文件不存在或已被清理"}, status: 404);
+    }
+    return _outputFileResponse(output, export.fileName);
   }
 
   Future<Response> _login(Request request) async {
@@ -166,6 +249,42 @@ class WebApp {
       return _json({"message": e.message}, status: 400);
     } catch (e) {
       return _json({"message": "搜索失败：$e"}, status: 400);
+    }
+  }
+
+  Future<Response> _downloadNovelCover(Request request, String token) async {
+    _removeExpiredNovelCovers();
+    final cover = _novelCovers[token];
+    if (cover == null || DateTime.now().isAfter(cover.expiresAt)) {
+      return _json({"message": "封面链接已失效"}, status: 404);
+    }
+    try {
+      final pageHost = Uri.tryParse(cover.referer)?.host.toLowerCase() ?? "";
+      final userAgent = pageHost.contains("wenku8")
+          ? WenkuNovelSource.userAgent
+          : BiliNovelSource.userAgent;
+      final upstream = await httpGetResponse(
+        cover.url,
+        headers: {
+          "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+          "Referer": cover.referer,
+          "User-Agent": userAgent,
+        },
+        timeout: const Duration(seconds: 30),
+      );
+      if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+        return _json({"message": "封面下载失败"}, status: 502);
+      }
+      final contentType = upstream.headers["content-type"] ?? "image/jpeg";
+      return Response.ok(
+        upstream.bodyBytes,
+        headers: {
+          "content-type": contentType,
+          "cache-control": "private, max-age=900",
+        },
+      );
+    } catch (_) {
+      return _json({"message": "封面下载失败"}, status: 502);
     }
   }
 
@@ -254,8 +373,9 @@ class WebApp {
   ) async {
     final results = List<_PreviewResult?>.filled(ids.length, null);
     var nextIndex = 0;
-    final workerCount =
-        ids.length < _previewConcurrency ? ids.length : _previewConcurrency;
+    final workerCount = ids.length < _previewConcurrency
+        ? ids.length
+        : _previewConcurrency;
 
     Future<void> worker() async {
       while (true) {
@@ -264,8 +384,10 @@ class WebApp {
         if (index >= ids.length) {
           return;
         }
-        results[index] =
-            await _loadNovelPreviewWithRetry(ids[index], urls[index]);
+        results[index] = await _loadNovelPreviewWithRetry(
+          ids[index],
+          urls[index],
+        );
       }
     }
 
@@ -293,7 +415,9 @@ class WebApp {
   }
 
   Future<Map<String, dynamic>> _loadNovelPreview(
-      int sourceId, String url) async {
+    int sourceId,
+    String url,
+  ) async {
     final packer = NovelPacker.fromUrl(url);
     final novel = await packer.getNovel();
 
@@ -372,15 +496,31 @@ class WebApp {
   }
 
   Response _downloadFile(Request request, String id, String file) {
-    final job = store.find(id);
     final fileName = Uri.decodeComponent(file).split("/").last;
+    final outputFile = _resolveOutputFile(id, fileName);
+    if (outputFile == null) {
+      return _json({"message": "文件不存在"}, status: 404);
+    }
+    return _outputFileResponse(outputFile, fileName);
+  }
+
+  File? _resolveOutputFile(String jobId, String fileName) {
+    if (jobId.isEmpty ||
+        fileName.isEmpty ||
+        fileName != path.basename(fileName) ||
+        fileName.contains("/") ||
+        fileName.contains("\\")) {
+      return null;
+    }
+    final job = store.find(jobId);
     if (job == null || !job.outputFiles.contains(fileName)) {
-      return _json({"message": "文件不存在"}, status: 404);
+      return null;
     }
-    final outputFile = store.outputFileFor(id, fileName);
-    if (!outputFile.existsSync()) {
-      return _json({"message": "文件不存在"}, status: 404);
-    }
+    final outputFile = store.outputFileFor(jobId, fileName);
+    return outputFile.existsSync() ? outputFile : null;
+  }
+
+  Response _outputFileResponse(File outputFile, String fileName) {
     final fallbackName = fileName.replaceAll(RegExp(r"[^A-Za-z0-9._-]"), "_");
     final encodedName = Uri.encodeComponent(fileName);
     return Response.ok(
@@ -409,6 +549,8 @@ class WebApp {
   }
 
   Stream<List<int>> _createEventStream() {
+    // The Shelf response subscriber owns this stream and triggers onCancel.
+    // ignore: close_sinks
     late StreamController<List<int>> controller;
     StreamSubscription<String>? subscription;
     Timer? heartbeat;
@@ -422,23 +564,27 @@ class WebApp {
     controller = StreamController<List<int>>(
       onListen: () {
         subscription = events.subscribe().listen(
-              addEvent,
-              onError: controller.addError,
-            );
+          addEvent,
+          onError: controller.addError,
+        );
         if (!controller.isClosed) {
           controller.add(utf8.encode("retry: 1000\n\n"));
         }
-        addEvent(events.formatEvent(
-          "jobs",
-          store.jobsToJson(),
-        ));
+        addEvent(
+          events.formatEvent(
+            "jobs",
+            store.jobsToJson(),
+          ),
+        );
         heartbeat = Timer.periodic(
           const Duration(seconds: 5),
           (_) {
-            addEvent(events.formatEvent(
-              "heartbeat",
-              {"message": "keepalive"},
-            ));
+            addEvent(
+              events.formatEvent(
+                "heartbeat",
+                {"message": "keepalive"},
+              ),
+            );
           },
         );
       },
@@ -471,7 +617,26 @@ class WebApp {
     if (!path.startsWith("api/")) {
       return false;
     }
-    return path != "api/login" && path != "api/me";
+    if (request.method == "GET" && path.startsWith("api/native/exports/")) {
+      return false;
+    }
+    return path != "api/login" &&
+        path != "api/me" &&
+        path != "api/runtime" &&
+        path != "api/native/bootstrap";
+  }
+
+  String _randomNativeExportToken() {
+    final bytes = List<int>.generate(
+      32,
+      (_) => _nativeExportRandom.nextInt(256),
+    );
+    return base64UrlEncode(bytes).replaceAll("=", "");
+  }
+
+  void _removeExpiredNativeExports() {
+    final now = DateTime.now();
+    _nativeExports.removeWhere((_, export) => now.isAfter(export.expiresAt));
   }
 
   List<int> _sseData(String event) => utf8.encode("data: $event\n\n");
@@ -523,7 +688,7 @@ class WebApp {
       "alias": novel.alias,
       "author": novel.author,
       "status": novel.status,
-      "coverUrl": _normalizeCoverUrl(novel.coverUrl, url),
+      "coverUrl": _registerNovelCover(novel.coverUrl, url),
       "tags": novel.tags ?? [],
       "publisher": novel.publisher,
       "description": novel.description,
@@ -549,6 +714,50 @@ class WebApp {
     }
     return page.resolve(value).toString();
   }
+
+  String? _registerNovelCover(String? coverUrl, String pageUrl) {
+    final normalized = _normalizeCoverUrl(coverUrl, pageUrl);
+    if (normalized == null) {
+      return null;
+    }
+    _removeExpiredNovelCovers();
+    final token = _randomNativeExportToken();
+    _novelCovers[token] = _NovelCover(
+      url: normalized,
+      referer: pageUrl,
+      expiresAt: DateTime.now().add(const Duration(minutes: 30)),
+    );
+    return "/api/novel/covers/$token";
+  }
+
+  void _removeExpiredNovelCovers() {
+    final now = DateTime.now();
+    _novelCovers.removeWhere((_, cover) => now.isAfter(cover.expiresAt));
+  }
+}
+
+class _NativeExport {
+  final String jobId;
+  final String fileName;
+  final DateTime expiresAt;
+
+  const _NativeExport({
+    required this.jobId,
+    required this.fileName,
+    required this.expiresAt,
+  });
+}
+
+class _NovelCover {
+  final String url;
+  final String referer;
+  final DateTime expiresAt;
+
+  const _NovelCover({
+    required this.url,
+    required this.referer,
+    required this.expiresAt,
+  });
 }
 
 class _PreviewResult {
@@ -558,14 +767,14 @@ class _PreviewResult {
   final String? message;
 
   const _PreviewResult.success(this.sourceId, this.url, this.preview)
-      : message = null;
+    : message = null;
 
   const _PreviewResult.failure(this.sourceId, this.url, this.message)
-      : preview = null;
+    : preview = null;
 
   Map<String, dynamic> failureToJson() => {
-        "sourceId": sourceId,
-        "url": url,
-        "message": message ?? "搜索失败",
-      };
+    "sourceId": sourceId,
+    "url": url,
+    "message": message ?? "搜索失败",
+  };
 }

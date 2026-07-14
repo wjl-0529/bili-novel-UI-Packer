@@ -109,13 +109,13 @@ class Chapter {
   Chapter(this.chapterName, this.chapterUrl, this.volume);
 
   @override
-  int get hashCode =>
-      [chapterName, chapterUrl, volume.hashCode].toString().hashCode;
+  int get hashCode => Object.hash(chapterName, chapterUrl, volume.volumeName);
 
   @override
   bool operator ==(Object other) {
     if (other is! Chapter) return false;
-    if (hashCode == other.hashCode) return true;
-    return false;
+    return chapterName == other.chapterName &&
+        chapterUrl == other.chapterUrl &&
+        volume.volumeName == other.volume.volumeName;
   }
 }

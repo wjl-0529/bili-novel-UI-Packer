@@ -7,6 +7,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   Build:
     strategy:
@@ -30,7 +33,7 @@ jobs:
       date: ${{ steps.get_version.outputs.date}}
     runs-on: ${{ matrix.os }}
     env:
-      FLUTTER_VERSION: 3.35.5
+      FLUTTER_VERSION: 3.44.3
     steps:
       # Checkout branch
       - name: Checkout

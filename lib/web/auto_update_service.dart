@@ -9,8 +9,8 @@ import 'package:bili_novel_packer/web/bark_message.dart';
 import 'package:bili_novel_packer/web/job.dart';
 import 'package:bili_novel_packer/web/job_queue.dart';
 import 'package:bili_novel_packer/web/job_store.dart';
-import 'package:bili_novel_packer/web/range_parser.dart';
 import 'package:bili_novel_packer/web/webdav.dart';
+import 'package:bili_novel_packer/web/volume_selector.dart';
 import 'package:path/path.dart' as path;
 
 class AutoUpdateRunResult {
@@ -25,10 +25,10 @@ class AutoUpdateRunResult {
   });
 
   Map<String, dynamic> toJson() => {
-        "checked": checked,
-        "updated": updated,
-        "items": items.map((item) => item.toJson()).toList(),
-      };
+    "checked": checked,
+    "updated": updated,
+    "items": items.map((item) => item.toJson()).toList(),
+  };
 }
 
 class AutoUpdateItemResult {
@@ -43,10 +43,10 @@ class AutoUpdateItemResult {
   });
 
   Map<String, dynamic> toJson() => {
-        "jobId": jobId,
-        "status": status,
-        "message": message,
-      };
+    "jobId": jobId,
+    "status": status,
+    "message": message,
+  };
 }
 
 class AutoUpdateService {
@@ -92,11 +92,13 @@ class AutoUpdateService {
             lastMessage: "任务不存在",
           );
           items = _replaceItem(items, next);
-          results.add(AutoUpdateItemResult(
-            jobId: item.jobId,
-            status: "missing",
-            message: "任务不存在",
-          ));
+          results.add(
+            AutoUpdateItemResult(
+              jobId: item.jobId,
+              status: "missing",
+              message: "任务不存在",
+            ),
+          );
           continue;
         }
         if (job.status != "succeeded") {
@@ -106,11 +108,13 @@ class AutoUpdateService {
             lastMessage: "任务未完成，已跳过",
           );
           items = _replaceItem(items, next);
-          results.add(AutoUpdateItemResult(
-            jobId: item.jobId,
-            status: "skipped",
-            message: "任务未完成，已跳过",
-          ));
+          results.add(
+            AutoUpdateItemResult(
+              jobId: item.jobId,
+              status: "skipped",
+              message: "任务未完成，已跳过",
+            ),
+          );
           continue;
         }
 
@@ -125,11 +129,13 @@ class AutoUpdateService {
               lastMessage: "已记录更新基线",
             );
             items = _replaceItem(items, next);
-            results.add(AutoUpdateItemResult(
-              jobId: item.jobId,
-              status: "baseline",
-              message: "已记录更新基线",
-            ));
+            results.add(
+              AutoUpdateItemResult(
+                jobId: item.jobId,
+                status: "baseline",
+                message: "已记录更新基线",
+              ),
+            );
             continue;
           }
           if (item.baselineFingerprint == snapshot.fingerprint) {
@@ -139,11 +145,13 @@ class AutoUpdateService {
               lastMessage: "暂无更新",
             );
             items = _replaceItem(items, next);
-            results.add(AutoUpdateItemResult(
-              jobId: item.jobId,
-              status: "unchanged",
-              message: "暂无更新",
-            ));
+            results.add(
+              AutoUpdateItemResult(
+                jobId: item.jobId,
+                status: "unchanged",
+                message: "暂无更新",
+              ),
+            );
             continue;
           }
 
@@ -157,11 +165,13 @@ class AutoUpdateService {
             lastMessage: "已更新 ${snapshot.chapterCount} 章",
           );
           items = _replaceItem(items, next);
-          results.add(AutoUpdateItemResult(
-            jobId: item.jobId,
-            status: "updated",
-            message: "已更新 ${snapshot.chapterCount} 章",
-          ));
+          results.add(
+            AutoUpdateItemResult(
+              jobId: item.jobId,
+              status: "updated",
+              message: "已更新 ${snapshot.chapterCount} 章",
+            ),
+          );
         } catch (e) {
           job.addLog("自动更新失败：$e");
           await store.save();
@@ -178,11 +188,13 @@ class AutoUpdateService {
             lastMessage: e.toString(),
           );
           items = _replaceItem(items, next);
-          results.add(AutoUpdateItemResult(
-            jobId: item.jobId,
-            status: "failed",
-            message: e.toString(),
-          ));
+          results.add(
+            AutoUpdateItemResult(
+              jobId: item.jobId,
+              status: "failed",
+              message: e.toString(),
+            ),
+          );
         }
         config = config.copyWith(items: items);
         await configStore.save(config);
@@ -218,10 +230,12 @@ class AutoUpdateService {
     final outputDir = Directory(store.outputDirFor(job.id));
     final updatesRoot = Directory(path.join(store.outputsDir, ".updates"));
     final updateId = DateTime.now().microsecondsSinceEpoch.toString();
-    final tempDir =
-        Directory(path.join(updatesRoot.path, "${job.id}-$updateId"));
-    final backupDir =
-        Directory(path.join(updatesRoot.path, "${job.id}-$updateId.backup"));
+    final tempDir = Directory(
+      path.join(updatesRoot.path, "${job.id}-$updateId"),
+    );
+    final backupDir = Directory(
+      path.join(updatesRoot.path, "${job.id}-$updateId.backup"),
+    );
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -258,7 +272,7 @@ class AutoUpdateService {
       job.title = snapshot.novel.title;
       job.author = snapshot.novel.author;
       job.sourceName = snapshot.sourceName;
-      job.volumeSummary = _volumeSummary(snapshot.volumes);
+      job.volumeSummary = volumeSummary(snapshot.volumes);
       job.outputFiles = files.map(path.basename).toList();
       job.status = "succeeded";
       job.progress = 0.97;
@@ -315,20 +329,22 @@ class AutoUpdateService {
     String outputDirectory,
   ) async {
     final packer = snapshot.packer;
-    return packer.pack(PackArgument.all(
-      addChapterTitle: job.request.addChapterTitle,
-      combineVolume: job.request.combineVolume,
-      packVolumes: snapshot.volumes,
-      outputDirectory: outputDirectory,
-      onProgress: (event) {
-        final ratio = event.ratio;
-        if (ratio != null) {
-          job.progress = 0.1 + ratio.clamp(0.0, 1.0).toDouble() * 0.82;
-        }
-        job.addLog(event.message);
-        queue.publishJobSnapshot(job);
-      },
-    ));
+    return packer.pack(
+      PackArgument.all(
+        addChapterTitle: job.request.addChapterTitle,
+        combineVolume: job.request.combineVolume,
+        packVolumes: snapshot.volumes,
+        outputDirectory: outputDirectory,
+        onProgress: (event) {
+          final ratio = event.ratio;
+          if (ratio != null) {
+            job.progress = 0.1 + ratio.clamp(0.0, 1.0).toDouble() * 0.82;
+          }
+          job.addLog(event.message);
+          queue.publishJobSnapshot(job);
+        },
+      ),
+    );
   }
 
   Future<void> _replaceWebDav(
@@ -427,18 +443,22 @@ class AutoUpdateService {
     final packer = NovelPacker.fromUrl(job.url);
     final novel = await packer.getNovel();
     final catalog = await packer.getCatalog();
-    final volumes = _selectVolumes(catalog, job.request.volumeRangeText);
+    final volumes = selectVolumes(catalog, job.request.volumeRangeText);
     final payload = {
       "volumes": volumes
-          .map((volume) => {
-                "name": volume.volumeName,
-                "chapters": volume.chapters
-                    .map((chapter) => {
-                          "name": chapter.chapterName,
-                          "url": chapter.chapterUrl ?? "",
-                        })
-                    .toList(),
-              })
+          .map(
+            (volume) => {
+              "name": volume.volumeName,
+              "chapters": volume.chapters
+                  .map(
+                    (chapter) => {
+                      "name": chapter.chapterName,
+                      "url": chapter.chapterUrl ?? "",
+                    },
+                  )
+                  .toList(),
+            },
+          )
           .toList(),
     };
     final chapterCount = volumes.fold<int>(
@@ -453,27 +473,6 @@ class AutoUpdateService {
       chapterCount: chapterCount,
       fingerprint: jsonEncode(payload),
     );
-  }
-
-  List<Volume> _selectVolumes(Catalog catalog, String rangeText) {
-    if (rangeText.trim().isEmpty || rangeText.trim() == "0") {
-      return catalog.volumes;
-    }
-    final indexes = parseIntegerRange(
-      rangeText,
-      maxValue: catalog.volumes.length,
-    );
-    return indexes.map((index) => catalog.volumes[index - 1]).toList();
-  }
-
-  String _volumeSummary(List<Volume> volumes) {
-    if (volumes.isEmpty) {
-      return "未选择分卷";
-    }
-    if (volumes.length <= 3) {
-      return volumes.map((volume) => volume.toString()).join(", ");
-    }
-    return "${volumes.length} 个分卷";
   }
 
   List<AutoUpdateItem> _replaceItem(

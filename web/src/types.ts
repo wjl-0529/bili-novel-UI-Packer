@@ -1,10 +1,16 @@
 export type JobStatus =
   | "queued"
   | "running"
+  | "paused"
   | "canceling"
   | "succeeded"
   | "failed"
   | "canceled";
+
+export type RuntimeInfo = {
+  embedded: boolean;
+  platform: string | null;
+};
 
 export type BarkEvents = {
   start: boolean;
