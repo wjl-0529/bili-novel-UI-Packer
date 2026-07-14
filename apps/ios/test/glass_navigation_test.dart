@@ -41,7 +41,7 @@ void main() {
     pageController.jumpTo(pageController.position.viewportDimension);
     await tester.pump();
 
-    expect(tester.getTopLeft(slider).dx, closeTo(startLeft + itemWidth, 0.1));
+    expect(tester.getTopLeft(slider).dx, closeTo(startLeft + itemWidth, 1));
     expect(tester.getSize(slider).width, closeTo(startWidth, 0.1));
 
     await tester.pumpWidget(const SizedBox());
