@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -41,8 +42,8 @@ class NovelPackerIosApp extends StatelessWidget {
           elevation: 0,
         ),
         navigationBarTheme: NavigationBarThemeData(
-          backgroundColor: Colors.white.withValues(alpha: 0.70),
-          indicatorColor: scheme.primary.withValues(alpha: 0.16),
+          backgroundColor: Colors.white.withValues(alpha: 0.38),
+          indicatorColor: scheme.primary.withValues(alpha: 0.10),
           elevation: 0,
         ),
         filledButtonTheme: FilledButtonThemeData(
@@ -55,7 +56,7 @@ class NovelPackerIosApp extends StatelessWidget {
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            backgroundColor: Colors.white.withValues(alpha: 0.34),
+            backgroundColor: Colors.white.withValues(alpha: 0.22),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
             ),
@@ -71,7 +72,7 @@ class NovelPackerIosApp extends StatelessWidget {
             borderSide: BorderSide(color: Color(0x665f6f6d)),
           ),
           filled: true,
-          fillColor: Color(0xb3ffffff),
+          fillColor: Color(0x80ffffff),
         ),
         cardTheme: const CardThemeData(
           margin: EdgeInsets.zero,
@@ -619,6 +620,9 @@ class _NativeHomePageState extends State<NativeHomePage> {
   }
 
   void _onPageChanged(int index) {
+    if (_index != index) {
+      unawaited(HapticFeedback.selectionClick());
+    }
     setState(() => _index = index);
     if (index == 1) {
       unawaited(_jobsKey.currentState?.refresh());
@@ -650,6 +654,7 @@ class _NativeHomePageState extends State<NativeHomePage> {
         minimum: const EdgeInsets.fromLTRB(18, 0, 18, 8),
         child: GlassBottomNavigationBar(
           selectedIndex: _index,
+          pageController: _pageController,
           onSelected: _selectTab,
         ),
       ),
@@ -659,10 +664,12 @@ class _NativeHomePageState extends State<NativeHomePage> {
 
 class GlassBottomNavigationBar extends StatelessWidget {
   final int selectedIndex;
+  final PageController pageController;
   final ValueChanged<int> onSelected;
 
   const GlassBottomNavigationBar({
     required this.selectedIndex,
+    required this.pageController,
     required this.onSelected,
     super.key,
   });
@@ -689,6 +696,7 @@ class GlassBottomNavigationBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
+    const inactive = Color(0xff5f666b);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onHorizontalDragEnd: (details) {
@@ -699,121 +707,234 @@ class GlassBottomNavigationBar extends StatelessWidget {
           onSelected(selectedIndex - 1);
         }
       },
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(28),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-          child: Container(
-            height: 68,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.54),
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.82),
-                width: 1,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.12),
-                  blurRadius: 30,
-                  offset: const Offset(0, 12),
-                ),
-                BoxShadow(
-                  color: Colors.white.withValues(alpha: 0.45),
-                  blurRadius: 2,
-                  offset: const Offset(0, -1),
-                ),
-              ],
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.13),
+              blurRadius: 32,
+              offset: const Offset(0, 13),
             ),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final itemWidth = constraints.maxWidth / _items.length;
-                return Stack(
-                  children: [
-                    AnimatedPositioned(
-                      duration: const Duration(milliseconds: 320),
-                      curve: Curves.easeOutCubic,
-                      left: selectedIndex * itemWidth + 5,
-                      top: 5,
-                      width: itemWidth - 10,
-                      height: 58,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.72),
-                          borderRadius: BorderRadius.circular(23),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.92),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: primary.withValues(alpha: 0.13),
-                              blurRadius: 18,
-                              offset: const Offset(0, 5),
-                            ),
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.07),
-                              blurRadius: 9,
-                              offset: const Offset(0, 3),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        for (var index = 0; index < _items.length; index++)
-                          Expanded(
-                            child: Semantics(
-                              selected: selectedIndex == index,
-                              button: true,
-                              label: _items[index].label,
-                              child: InkResponse(
-                                onTap: () => onSelected(index),
-                                containedInkWell: true,
-                                highlightShape: BoxShape.rectangle,
-                                child: SizedBox.expand(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      AnimatedSwitcher(
-                                        duration: const Duration(
-                                          milliseconds: 180,
+            BoxShadow(
+              color: Colors.white.withValues(alpha: 0.38),
+              blurRadius: 3,
+              offset: const Offset(0, -1),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 32, sigmaY: 32),
+            child: Container(
+              key: const Key('glass-navigation-track'),
+              height: 68,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.38),
+                    Colors.white.withValues(alpha: 0.24),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.68),
+                  width: 1,
+                ),
+              ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final itemWidth = constraints.maxWidth / _items.length;
+                  return AnimatedBuilder(
+                    animation: pageController,
+                    builder: (context, _) {
+                      final pagePosition =
+                          (pageController.hasClients
+                                  ? pageController.page ??
+                                        selectedIndex.toDouble()
+                                  : selectedIndex.toDouble())
+                              .clamp(0.0, (_items.length - 1).toDouble())
+                              .toDouble();
+                      final transition =
+                          ((pagePosition - pagePosition.round()).abs() * 2)
+                              .clamp(0.0, 1.0)
+                              .toDouble();
+                      final stretch =
+                          itemWidth *
+                          0.14 *
+                          Curves.easeOut.transform(transition);
+                      final sliderWidth = itemWidth - 10 + stretch;
+                      final sliderLeft =
+                          pagePosition * itemWidth + 5 - stretch / 2;
+
+                      return Stack(
+                        children: [
+                          Positioned(
+                            left: sliderLeft,
+                            top: 5,
+                            width: sliderWidth,
+                            height: 58,
+                            child: Transform.scale(
+                              scaleY: 1 - transition * 0.035,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(23),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: primary.withValues(alpha: 0.14),
+                                      blurRadius: 22,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                    BoxShadow(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.09,
+                                      ),
+                                      blurRadius: 11,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: ClipRRect(
+                                  key: const Key('glass-navigation-slider'),
+                                  borderRadius: BorderRadius.circular(23),
+                                  child: BackdropFilter(
+                                    filter: ui.ImageFilter.blur(
+                                      sigmaX: 18,
+                                      sigmaY: 18,
+                                    ),
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            Colors.white.withValues(
+                                              alpha: 0.50,
+                                            ),
+                                            Colors.white.withValues(
+                                              alpha: 0.20,
+                                            ),
+                                          ],
                                         ),
-                                        child: Icon(
-                                          selectedIndex == index
-                                              ? _items[index].selectedIcon
-                                              : _items[index].icon,
-                                          key: ValueKey(selectedIndex == index),
-                                          size: 23,
-                                          color: selectedIndex == index
-                                              ? primary
-                                              : const Color(0xff5f666b),
+                                        borderRadius: BorderRadius.circular(23),
+                                        border: Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: 0.76,
+                                          ),
                                         ),
                                       ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        _items[index].label,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: selectedIndex == index
-                                              ? FontWeight.w700
-                                              : FontWeight.w500,
-                                          color: selectedIndex == index
-                                              ? primary
-                                              : const Color(0xff5f666b),
+                                      child: Align(
+                                        alignment: Alignment.topCenter,
+                                        child: FractionallySizedBox(
+                                          widthFactor: 0.72,
+                                          child: Container(
+                                            height: 1,
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                colors: [
+                                                  Colors.white.withValues(
+                                                    alpha: 0,
+                                                  ),
+                                                  Colors.white.withValues(
+                                                    alpha: 0.90,
+                                                  ),
+                                                  Colors.white.withValues(
+                                                    alpha: 0,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
                                         ),
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                      ],
-                    ),
-                  ],
-                );
-              },
+                          Row(
+                            children: [
+                              for (
+                                var index = 0;
+                                index < _items.length;
+                                index++
+                              )
+                                Expanded(
+                                  child: Builder(
+                                    builder: (context) {
+                                      final emphasis =
+                                          (1 - (pagePosition - index).abs())
+                                              .clamp(0.0, 1.0)
+                                              .toDouble();
+                                      final active = emphasis >= 0.5;
+                                      final foreground = Color.lerp(
+                                        inactive,
+                                        primary,
+                                        emphasis,
+                                      )!;
+                                      return Semantics(
+                                        selected: selectedIndex == index,
+                                        button: true,
+                                        label: _items[index].label,
+                                        child: InkResponse(
+                                          onTap: () => onSelected(index),
+                                          containedInkWell: true,
+                                          highlightShape: BoxShape.rectangle,
+                                          child: SizedBox.expand(
+                                            child: Column(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Transform.scale(
+                                                  scale: 0.96 + emphasis * 0.08,
+                                                  child: AnimatedSwitcher(
+                                                    duration: const Duration(
+                                                      milliseconds: 140,
+                                                    ),
+                                                    child: Icon(
+                                                      active
+                                                          ? _items[index]
+                                                                .selectedIcon
+                                                          : _items[index].icon,
+                                                      key: ValueKey(
+                                                        'nav-$index-$active',
+                                                      ),
+                                                      size: 23,
+                                                      color: foreground,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  _items[index].label,
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: active
+                                                        ? FontWeight.w700
+                                                        : FontWeight.w500,
+                                                    color: foreground,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ),
         ),
@@ -2724,30 +2845,52 @@ class GlassSurface extends StatelessWidget {
   Widget build(BuildContext context) {
     final surface = DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.62),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: blur
+              ? [
+                  Colors.white.withValues(alpha: 0.46),
+                  Colors.white.withValues(alpha: 0.28),
+                ]
+              : [
+                  Colors.white.withValues(alpha: 0.56),
+                  Colors.white.withValues(alpha: 0.40),
+                ],
+        ),
         borderRadius: borderRadius,
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.72),
+          color: Colors.white.withValues(alpha: 0.66),
           width: 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 22,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
       child: child,
     );
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: blur
-          ? BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: surface,
-            )
-          : surface,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 24,
+            offset: const Offset(0, 9),
+          ),
+          BoxShadow(
+            color: Colors.white.withValues(alpha: 0.30),
+            blurRadius: 2,
+            offset: const Offset(0, -1),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: blur
+            ? BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+                child: surface,
+              )
+            : surface,
+      ),
     );
   }
 }
