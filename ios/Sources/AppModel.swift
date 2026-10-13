@@ -12,10 +12,17 @@ import SwiftUI
     @Published var progress: Double = 0
     @Published var status = "粘贴小说详情页链接开始"
     @Published var shareURL: URL?
+    @Published var searchText = ""
+    @Published var searchResults: [URL] = []
     private let service = NovelService()
     init() {
         let index = LibraryBook.directory.appendingPathComponent("library.json")
         if let data = try? Data(contentsOf: index), let saved = try? JSONDecoder().decode([LibraryBook].self, from: data) { books = saved }
+    }
+
+    func search() async {
+        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { status = "请输入书名"; return }
+        isLoading = true; defer { isLoading = false }; do { searchResults = try await service.search(searchText); status = searchResults.isEmpty ? "没有找到结果" : "找到 \(searchResults.count) 个结果" } catch { status = "搜索失败：\(error.localizedDescription)" }
     }
 
     func load() async {
@@ -55,15 +62,150 @@ import SwiftUI
 }
 
 struct ContentView: View {
-    @StateObject private var model = AppModel(); @State private var images = true
+    @StateObject private var model = AppModel()
+    @State private var images = true
+    @State private var chapterQuery = ""
+    @State private var operation: Task<Void, Never>?
     var body: some View {
         TabView {
-            NavigationStack { ScrollView { VStack(alignment: .leading, spacing: 20) { Text("轻小说打包器").font(.largeTitle.bold()); Text("原生 SwiftUI · iOS 27 Liquid Glass").foregroundStyle(.secondary); input; if let novel = model.novel { book(novel) }; Text(model.status).font(.footnote).foregroundStyle(.secondary) }.padding(20) }.background(Color(uiColor: .systemGroupedBackground)).navigationTitle("主页") }.tabItem { Label("打包", systemImage: "shippingbox") }
-            LibraryView(books: model.books).tabItem { Label("书库", systemImage: "books.vertical") }
+            NavigationStack {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("你的轻小说收藏站", systemImage: "book.pages.fill").font(.title.bold())
+                            Text("发现故事 · 挑选章节 · 离线珍藏").foregroundStyle(.secondary)
+                        }.padding(.vertical, 12)
+                        input
+                        if let novel = model.novel { detail(novel); catalog(novel) }
+                        if !model.isLoading && model.novel == nil {
+                            ContentUnavailableView("从一本书开始", systemImage: "books.vertical", description: Text("输入书名搜索，或粘贴小说详情页链接。支持哔哩轻小说与轻小说文库。"))
+                        }
+                        Label(model.status, systemImage: model.isLoading ? "hourglass" : "info.circle").font(.footnote).foregroundStyle(.secondary).textSelection(.enabled)
+                    }.padding(20).frame(maxWidth: 800).frame(maxWidth: .infinity)
+                }
+                .background(Color(uiColor: .systemGroupedBackground))
+                .navigationTitle("发现")
+                .safeAreaInset(edge: .bottom) {
+                    if model.novel != nil { exportBar }
+                }
+            }.tabItem { Label("发现", systemImage: "magnifyingglass") }
+            LibraryView(model: model).tabItem { Label("书库", systemImage: "books.vertical") }
         }.tint(.blue)
     }
-    var input: some View { VStack(alignment: .leading, spacing: 12) { TextField("粘贴 bilinovel / linovelib / wenku8 链接", text: $model.link).textInputAutocapitalization(.never).keyboardType(.URL).padding(14).background(.thinMaterial, in: .rect(cornerRadius: 16)); Button { Task { await model.load() } } label: { Label(model.isLoading ? "处理中…" : "读取小说", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity) }.buttonStyle(.glassProminent).disabled(model.isLoading) }.card() }
-    func book(_ novel: Novel) -> some View { VStack(alignment: .leading, spacing: 14) { Text(novel.title).font(.title2.bold()); Text("作者：\(novel.author)").foregroundStyle(.secondary); Toggle("下载插图", isOn: $images); HStack { Button("全选") { model.selected = Set(novel.chapters.map(\.id)) }; Button("清空") { model.selected.removeAll() } }.buttonStyle(.glass); Text("章节 \(model.selected.count)/\(novel.chapters.count)").font(.headline); ForEach(novel.chapters) { chapter in Toggle(chapter.title, isOn: Binding(get: { model.selected.contains(chapter.id) }, set: { if $0 { model.selected.insert(chapter.id) } else { model.selected.remove(chapter.id) } })) }.toggleStyle(.switch); if model.isLoading { ProgressView(value: model.progress) }; Button { Task { await model.export(includeImages: images) } } label: { Label("导出 EPUB", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity) }.buttonStyle(.glassProminent).disabled(model.isLoading); if let share = model.shareURL { ShareLink(item: share) { Label("分享 EPUB", systemImage: "shareplay") }.frame(maxWidth: .infinity) } }.card() }
+    private var input: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("查找小说").font(.headline)
+            HStack {
+                TextField("输入书名", text: $model.searchText).submitLabel(.search).onSubmit { startSearch() }
+                Button(action: startSearch) { Image(systemName: "magnifyingglass").padding(4) }.buttonStyle(.glass).accessibilityLabel("搜索小说")
+            }.padding(12).background(Color(uiColor: .tertiarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+            ForEach(model.searchResults, id: \.self) { url in
+                Button { model.link = url.absoluteString; startLoad() } label: {
+                    HStack { Image(systemName: "book.closed"); Text(url.lastPathComponent).font(.subheadline); Spacer(); Image(systemName: "chevron.right") }.padding(.vertical, 8)
+                }
+            }
+            Divider()
+            Label("通过链接导入", systemImage: "link").font(.subheadline.bold())
+            TextField("https://…/novel/123.html", text: $model.link).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).padding(12).background(Color(uiColor: .tertiarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+            Button(action: startLoad) { Label("读取书籍与目录", systemImage: "arrow.down.doc").frame(maxWidth: .infinity) }.buttonStyle(.glassProminent)
+        }.padding(18).background(.background, in: .rect(cornerRadius: 22)).disabled(model.isLoading)
+    }
+    private func startSearch() { operation = Task { await model.search() } }
+    private func startLoad() { operation = Task { await model.load() } }
+    private func detail(_ novel: Novel) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 16) {
+                AsyncImage(url: novel.cover) { image in image.resizable().scaledToFill() } placeholder: { RoundedRectangle(cornerRadius: 12).fill(.blue.opacity(0.12)).overlay(Image(systemName: "book.closed.fill").font(.largeTitle).foregroundStyle(.blue)) }.frame(width: 84, height: 116).clipShape(.rect(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(novel.title).font(.title2.bold())
+                    Text(novel.author).foregroundStyle(.secondary)
+                    Label("\(novel.chapters.count) 章", systemImage: "list.bullet").font(.caption)
+                    Link("查看原站", destination: novel.url).font(.caption)
+                }
+            }
+            if !novel.summary.isEmpty { Text(novel.summary).font(.subheadline).foregroundStyle(.secondary).lineLimit(6) }
+            Toggle("包含插图", isOn: $images).disabled(model.isLoading)
+        }.padding(18).background(.background, in: .rect(cornerRadius: 22))
+    }
+    private func catalog(_ novel: Novel) -> some View {
+        let volumes = novel.chapters.reduce(into: [String]()) { if !$0.contains($1.volume) { $0.append($1.volume) } }
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack { Text("选择章节").font(.title3.bold()); Spacer(); Text("已选 \(model.selected.count)").font(.caption).foregroundStyle(.secondary) }
+            TextField("筛选章节标题", text: $chapterQuery).padding(12).background(Color(uiColor: .tertiarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+            GlassEffectContainer {
+                HStack {
+                    Button("全选") { model.selected = Set(novel.chapters.map(\.id)) }
+                    Button("清空") { model.selected.removeAll() }
+                    Button("反选") { model.selected = Set(novel.chapters.map(\.id)).subtracting(model.selected) }
+                }.buttonStyle(.glass)
+            }
+            ForEach(volumes, id: \.self) { volume in
+                VolumeSelectionView(title: volume, chapters: novel.chapters.filter { $0.volume == volume }, query: chapterQuery, selected: $model.selected)
+            }
+        }.padding(18).background(.background, in: .rect(cornerRadius: 22)).disabled(model.isLoading)
+    }
+    private var exportBar: some View {
+        VStack(spacing: 10) {
+            if model.isLoading { ProgressView(value: model.progress); Text(model.status).font(.caption).lineLimit(2) }
+            GlassEffectContainer {
+                HStack {
+                    if model.isLoading {
+                        Button("取消", role: .cancel) { operation?.cancel() }.buttonStyle(.glass)
+                    } else {
+                        Button { operation = Task { await model.export(includeImages: images) } } label: { Label("打包 \(model.selected.count) 章", systemImage: "shippingbox.fill").frame(maxWidth: .infinity) }.buttonStyle(.glassProminent).disabled(model.selected.isEmpty)
+                        if let url = model.shareURL { ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }.buttonStyle(.glass).accessibilityLabel("分享 EPUB") }
+                    }
+                }
+            }
+        }.padding(16).background(.bar)
+    }
 }
-struct LibraryView: View { let books: [LibraryBook]; var body: some View { NavigationStack { List(books) { book in VStack(alignment: .leading) { Text(book.title).font(.headline); Text("\(book.chapterCount) 章 · \(book.author)").font(.caption).foregroundStyle(.secondary); ShareLink(item: book.url) { Label("分享", systemImage: "square.and.arrow.up") } } }.navigationTitle("书库") } } }
-private extension View { func card() -> some View { padding(18).background { if #available(iOS 26, *) { Color.clear.glassEffect(.regular, in: .rect(cornerRadius: 24)) } else { RoundedRectangle(cornerRadius: 24).fill(.background) } } } }
+
+struct VolumeSelectionView: View {
+    let title: String
+    let chapters: [Chapter]
+    let query: String
+    @Binding var selected: Set<String>
+    @State private var expanded = false
+    private var visible: [Chapter] { chapters.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Button { expanded.toggle() } label: {
+                    HStack { Image(systemName: expanded ? "chevron.down" : "chevron.right"); Text(title).font(.headline); Text("\(chapters.filter { selected.contains($0.id) }.count)/\(chapters.count)").font(.caption).foregroundStyle(.secondary) }
+                }.buttonStyle(.plain)
+                Spacer()
+                Button(chapters.allSatisfy { selected.contains($0.id) } ? "取消整卷" : "选择整卷") {
+                    let ids = Set(chapters.map(\.id)); if ids.isSubset(of: selected) { selected.subtract(ids) } else { selected.formUnion(ids) }
+                }.font(.caption).buttonStyle(.bordered)
+            }
+            if expanded || !query.isEmpty {
+                ForEach(visible) { chapter in
+                    Button { if selected.contains(chapter.id) { selected.remove(chapter.id) } else { selected.insert(chapter.id) } } label: {
+                        HStack(alignment: .top) { Image(systemName: selected.contains(chapter.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(selected.contains(chapter.id) ? Color.blue : Color.secondary); Text(chapter.title).foregroundStyle(.primary).multilineTextAlignment(.leading); Spacer() }.padding(.vertical, 7)
+                    }.buttonStyle(.plain).accessibilityLabel("\(chapter.title)，\(selected.contains(chapter.id) ? "已选择" : "未选择")")
+                }
+            }
+        }.padding(14).background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+    }
+}
+
+struct LibraryView: View {
+    @ObservedObject var model: AppModel
+    @State private var query = ""
+    var body: some View {
+        NavigationStack {
+            List {
+                if model.books.isEmpty { ContentUnavailableView("书库还是空的", systemImage: "books.vertical", description: Text("打包完成的 EPUB 会保存在这里。")) }
+                ForEach(model.books.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }) { book in
+                    HStack(spacing: 14) {
+                        Image(systemName: "book.closed.fill").font(.title).foregroundStyle(.blue).frame(width: 48, height: 64).background(.blue.opacity(0.08), in: .rect(cornerRadius: 10))
+                        VStack(alignment: .leading, spacing: 6) { Text(book.title).font(.headline); Text(book.author).font(.subheadline).foregroundStyle(.secondary); Text("\(book.chapterCount) 章 · \(book.date.formatted(date: .abbreviated, time: .omitted))").font(.caption).foregroundStyle(.secondary) }
+                        Spacer()
+                        ShareLink(item: book.url) { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("分享 \(book.title)")
+                    }.padding(.vertical, 6)
+                }
+            }.navigationTitle("我的书库").searchable(text: $query, prompt: "搜索已下载的小说")
+        }
+    }
+}

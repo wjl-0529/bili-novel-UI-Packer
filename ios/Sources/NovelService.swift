@@ -13,7 +13,7 @@ actor NovelService {
 
     static func supportedURL(_ text: String) throws -> URL {
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
-              url.scheme == "https", let host = url.host?.lowercased(),
+              ["https", "http"].contains(url.scheme ?? ""), let host = url.host?.lowercased(),
               ["linovelib.com", "bilinovel.com", "bilinovel.net", "wenku8.net"].contains(where: { host == $0 || host.hasSuffix("." + $0) }) else {
             throw NovelError.message("请输入哔哩轻小说或轻小说文库的 HTTPS 小说链接。")
         }
@@ -28,13 +28,15 @@ actor NovelService {
         var request = URLRequest(url: url)
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 Version/26.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
+        request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("night=0", forHTTPHeaderField: "Cookie")
         for attempt in 0..<3 {
             let (bytes, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw NovelError.message("无效的服务器响应。") }
             if http.statusCode == 429 || http.statusCode >= 500 {
                 if attempt < 2 { try await Task.sleep(for: .seconds(10 * (attempt + 1))); continue }
             }
-            guard (200..<300).contains(http.statusCode) else { throw NovelError.message("服务器返回 HTTP \(http.statusCode)，请稍后重试。") }
+            guard (200..<300).contains(http.statusCode) else { throw NovelError.message(http.statusCode == 403 ? "源站拒绝访问（HTTP 403），请先在浏览器确认该链接能打开。此应用无法绕过站点验证。" : "服务器返回 HTTP \(http.statusCode)，请稍后重试。") }
             return bytes
         }
         throw NovelError.message("请求重试失败。")
@@ -47,12 +49,22 @@ actor NovelService {
         return try SwiftSoup.parse(html, url.absoluteString)
     }
 
+    func search(_ query: String) async throws -> [URL] {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let candidates = [URL(string: "https://www.bilinovel.com/search.html?keyword=\(q)"), URL(string: "https://www.linovelib.com/search.html?keyword=\(q)")].compactMap { $0 }
+        var results: [URL] = []
+        for url in candidates { let doc = try await document(url); for link in try doc.select("a[href*=novel], a[href*=book]") { if let absolute = URL(string: try link.attr("abs:href")), !results.contains(absolute) { results.append(absolute) } }; if !results.isEmpty { return Array(results.prefix(20)) } }
+        return results
+    }
+
     func load(_ input: String) async throws -> Novel {
         let original = try Self.supportedURL(input)
-        let wenku = original.host!.contains("wenku8.net")
+        let host = original.host!.lowercased()
+        let wenku = host.contains("wenku8.net")
+        let biliHost = host.contains("linovelib.com") ? "https://www.linovelib.com" : "https://www.bilinovel.com"
         let id = original.path.capture(wenku ? #"/(?:book/|novel/\d+/)(\d+)"# : #"/(?:novel|download)/(\d+)"#)
         guard let id else { throw NovelError.message("无法识别书籍编号，请使用小说详情页或目录链接。") }
-        let url = URL(string: wenku ? "https://www.wenku8.net/book/\(id).htm" : "https://www.bilinovel.com/novel/\(id).html")!
+        let url = URL(string: wenku ? "https://www.wenku8.net/book/\(id).htm" : "\(biliHost)/novel/\(id).html")!
         let doc = try await document(url)
         let title = try doc.select(wenku ? "#content table span b" : ".book-title").first()?.text() ?? ""
         guard !title.isEmpty else { throw NovelError.message("未找到书籍信息：网站可能要求登录、验证码，或已更改页面结构。") }
@@ -69,7 +81,7 @@ actor NovelService {
         if wenku {
             guard let href = try doc.select("legend + div > a").first()?.attr("abs:href"), let link = URL(string: href) else { throw NovelError.message("找不到文库目录；需要登录的书籍暂不支持。") }
             catalogURL = link
-        } else { catalogURL = URL(string: "https://www.bilinovel.com/novel/\(id)/catalog")! }
+        } else { catalogURL = URL(string: "\(biliHost)/novel/\(id)/catalog")! }
         let catalog = try await document(catalogURL)
         let chapters = try Self.parseCatalog(catalog, wenku: wenku)
         guard !chapters.isEmpty else { throw NovelError.message("目录为空或章节链接被隐藏，不能继续下载。") }
