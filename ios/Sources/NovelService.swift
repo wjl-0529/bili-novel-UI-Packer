@@ -7,7 +7,8 @@ actor NovelService {
     private var lastRequest = Date.distantPast
     init() {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 35
+        config.timeoutIntervalForRequest = 25
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(configuration: config)
     }
 
@@ -29,7 +30,6 @@ actor NovelService {
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 Version/26.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
         request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
-        request.setValue("night=0", forHTTPHeaderField: "Cookie")
         for attempt in 0..<3 {
             let (bytes, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw NovelError.message("无效的服务器响应。") }
@@ -59,9 +59,32 @@ actor NovelService {
 
     func load(_ input: String) async throws -> Novel {
         let original = try Self.supportedURL(input)
+        if original.host?.contains("wenku8.net") == true { return try await loadSource(original.absoluteString) }
+        guard let id = original.path.capture(#"/(?:novel|download)/(\d+)"#) else { throw NovelError.message("无法识别书籍编号。") }
+        var components = URLComponents(url: original, resolvingAgainstBaseURL: false)!
+        components.scheme = "https"
+        components.path = "/novel/\(id).html"
+        components.query = nil; components.fragment = nil
+        var candidates = [components.url!]
+        for host in ["www.linovelib.com", "www.bilinovel.com", "www.bilinovel.net"] {
+            components.host = host
+            if let url = components.url, !candidates.contains(url) { candidates.append(url) }
+        }
+        var failures: [String] = []
+        for candidate in candidates {
+            try Task.checkCancellation()
+            do { return try await loadSource(candidate.absoluteString) }
+            catch is CancellationError { throw CancellationError() }
+            catch { failures.append("\(candidate.host ?? "源站")：\(error.localizedDescription)") }
+        }
+        throw NovelError.message("所有来源读取失败：\n" + failures.joined(separator: "\n"))
+    }
+
+    private func loadSource(_ input: String) async throws -> Novel {
+        let original = try Self.supportedURL(input)
         let host = original.host!.lowercased()
         let wenku = host.contains("wenku8.net")
-        let biliHost = host.contains("linovelib.com") ? "https://www.linovelib.com" : "https://www.bilinovel.com"
+        let biliHost = "https://" + host
         let id = original.path.capture(wenku ? #"/(?:book/|novel/\d+/)(\d+)"# : #"/(?:novel|download)/(\d+)"#)
         guard let id else { throw NovelError.message("无法识别书籍编号，请使用小说详情页或目录链接。") }
         let url = URL(string: wenku ? "https://www.wenku8.net/book/\(id).htm" : "\(biliHost)/novel/\(id).html")!

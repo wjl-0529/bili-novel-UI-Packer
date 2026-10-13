@@ -26,7 +26,7 @@ import SwiftUI
     }
 
     func load() async {
-        isLoading = true; status = "读取书籍和目录…"; defer { isLoading = false }
+        isLoading = true; status = "读取书籍和目录…"; novel = nil; selected.removeAll(); shareURL = nil; defer { isLoading = false }
         do { let result = try await service.load(link); novel = result; selected = Set(result.chapters.map(\.id)); status = "已找到 \(result.chapters.count) 个章节" }
         catch { status = error.localizedDescription }
     }
@@ -72,7 +72,7 @@ struct ContentView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         VStack(alignment: .leading, spacing: 8) {
-                            Label("你的轻小说收藏站", systemImage: "book.pages.fill").font(.title.bold())
+                            Label("轻小说 · 1.1.0", systemImage: "book.pages.fill").font(.title.bold())
                             Text("发现故事 · 挑选章节 · 离线珍藏").foregroundStyle(.secondary)
                         }.padding(.vertical, 12)
                         input
