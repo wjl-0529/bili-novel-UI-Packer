@@ -5,6 +5,7 @@ import SwiftSoup
 actor NovelService {
     private let session: URLSession
     private var lastRequest = Date.distantPast
+    private var restoreCache: [URL: ChapterRestore] = [:]
     init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 25
@@ -140,11 +141,20 @@ actor NovelService {
             guard visited.insert(current).inserted, visited.count <= 100 else { throw NovelError.message("检测到章节分页循环。") }
             let doc = try await document(current)
             guard let content = try doc.select("#acontent, .bcontent, #content").first() else { throw NovelError.message("未找到章节正文：\(chapter.title)") }
-            // Do not silently export scrambled text when the site's restoration script is present.
-            if try doc.select("script[src*=chapterlog]").size() > 0 {
-                throw NovelError.message("该章节使用 chapterlog 段落混淆，当前原生版本无法可靠还原，已停止导出以避免生成错序正文。")
-            }
             try content.select("script, style, ins, .tp, .bd, #contentdp, #contentad").remove()
+            if let script = try doc.select("script[src*=chapterlog]").first() {
+                guard let scriptURL = URL(string: try script.attr("abs:src")),
+                      let idText = try doc.outerHtml().capture(#"chapterid\s*:\s*['"](\d+)"#),
+                      let chapterID = Int64(idText) else { throw NovelError.message("正文缺少还原所需的章节编号。") }
+                let template: ChapterRestore
+                if let cached = restoreCache[scriptURL] { template = cached }
+                else {
+                    let bytes = try await data(scriptURL, referer: current)
+                    template = try ChapterRestore.parse(String(decoding: bytes, as: UTF8.self))
+                    restoreCache[scriptURL] = template
+                }
+                try template.restore(content, chapterID: chapterID)
+            }
             for image in try content.select("img") {
                 if !includeImages { try image.remove(); continue }
                 let raw = try image.attr("data-src").isEmpty ? image.attr("src") : image.attr("data-src")
