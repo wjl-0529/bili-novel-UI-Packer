@@ -1,0 +1,28 @@
+name: Verify actual novel 5428
+on:
+  push:
+    paths: ['ios/Tests/LiveSourceTests.swift', '.github/workflows/live-source-test.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen && xcodegen generate
+      - name: Read actual source using iOS parser
+        run: |
+          set -o pipefail
+          LIVE_SOURCE_TEST=1 TEST_RUNNER_LIVE_SOURCE_TEST=1 xcodebuild test -scheme BiliNovel -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:BiliNovelTests/LiveSourceTests -resultBundlePath LiveSource.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 | tee live-source.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-source-evidence
+          path: |
+            ios/live-source.log
+            ios/LiveSource.xcresult
