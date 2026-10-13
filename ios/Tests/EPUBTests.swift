@@ -3,6 +3,13 @@ import SwiftSoup
 @testable import BiliNovel
 
 final class EPUBTests: XCTestCase {
+    func testRejectsTruncatedSourceBeforeExport() throws {
+        let doc = try SwiftSoup.parse("<div><p>这是一段真实正文。</p><p>（內容加載失敗！請刷新或更換瀏覽器）</p></div>")
+        XCTAssertThrowsError(try NovelService.validateChapter(XCTUnwrap(doc.select("div").first())))
+        let valid = try SwiftSoup.parse("<div><p>完整正文。</p></div>")
+        XCTAssertNoThrow(try NovelService.validateChapter(XCTUnwrap(valid.select("div").first())))
+    }
+
     func testCatalogHiddenLinkDoesNotDiscardReadableChapters() throws {
         let doc = try SwiftSoup.parse("<ul class='volume-chapters'><li class='chapter-bar'>第一卷</li><li class='jsChapter'><a href='javascript:void(0)'>隐藏章</a></li><li class='jsChapter'><a href='/novel/5428/123.html'>第一章</a></li></ul>", "https://www.linovelib.com")
         let chapters = try NovelService.parseCatalog(doc, wenku: false)
@@ -23,3 +30,4 @@ final class EPUBTests: XCTestCase {
     func testXMLIsEscaped() { XCTAssertEqual("a < b & c".xml, "a &lt; b &amp; c") }
     func testImageSignature() { XCTAssertEqual( NovelService.imageExtension(Data([0xFF,0xD8,0xFF])), "jpg") }
 }
+

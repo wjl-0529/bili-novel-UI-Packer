@@ -28,8 +28,9 @@ actor NovelService {
         if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
         lastRequest = Date()
         var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 Version/26.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
+        request.setValue("night=0", forHTTPHeaderField: "Cookie")
         request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
         for attempt in 0..<3 {
             let (bytes, response) = try await session.data(for: request)
@@ -139,16 +140,10 @@ actor NovelService {
         var output = ""
         while let current = page {
             guard visited.insert(current).inserted, visited.count <= 100 else { throw NovelError.message("检测到章节分页循环。") }
-            let isBili = current.host?.contains("wenku8.net") != true
-            let doc: Document
-            if isBili {
-                let rendered = try await RenderedChapter.load(current)
-                doc = try SwiftSoup.parse(rendered, current.absoluteString)
-                // The site's chapterlog has already run in WebKit. Do not restore twice.
-                try doc.select("script[src*=chapterlog]").remove()
-            } else { doc = try await document(current) }
+            let doc = try await document(current)
             guard let content = try doc.select("#acontent, .bcontent, #content").first() else { throw NovelError.message("未找到章节正文：\(chapter.title)") }
-            try content.select("script, style, ins, .tp, .bd, #contentdp, #contentad").remove()
+            try Self.validateChapter(content)
+            try content.select("div, script, style, ins, figure, fig, br, .tp, .bd, #contentdp, #contentad").remove()
             if let script = try doc.select("script[src*=chapterlog]").first() {
                 guard let scriptURL = URL(string: try script.attr("abs:src")),
                       let idText = try doc.outerHtml().capture(#"chapterid\s*:\s*['"](\d+)"#),
@@ -194,6 +189,14 @@ actor NovelService {
         return output
     }
 
+    static func validateChapter(_ content: Element) throws {
+        let text = try content.text()
+        let notices = ["无法完美使用", "無法完美使用", "內容加載失敗", "内容加载失败", "请使用〔Chrome", "Just a moment"]
+        guard !notices.contains(where: text.contains), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NovelError.message("源站返回了被截断的正文或浏览器提示，无法生成完整 EPUB。请稍后重试。")
+        }
+    }
+
     static func xhtml(_ node: Node) throws -> String {
         if let text = node as? TextNode { return text.getWholeText().xml }
         guard let element = node as? Element else { return "" }
@@ -214,3 +217,4 @@ actor NovelService {
         return nil
     }
 }
+
