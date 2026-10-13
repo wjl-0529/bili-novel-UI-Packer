@@ -12,8 +12,8 @@ packages:
 settings:
   base:
     SWIFT_VERSION: '5.0'
-    MARKETING_VERSION: '1.2.0'
-    CURRENT_PROJECT_VERSION: '120'
+    MARKETING_VERSION: '1.2.1'
+    CURRENT_PROJECT_VERSION: '121'
     TARGETED_DEVICE_FAMILY: '1,2'
     CODE_SIGNING_ALLOWED: NO
 targets:
@@ -50,3 +50,4 @@ schemes:
         BiliNovel: all
     test:
       targets: [BiliNovelTests]
+
