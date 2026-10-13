@@ -1,0 +1,20 @@
+name: unsigned iOS IPA
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: brew install xcodegen && xcodegen generate
+      - name: Test
+        run: xcodebuild test -scheme BiliNovel -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO
+      - name: Archive unsigned
+        run: xcodebuild archive -project BiliNovel.xcodeproj -scheme BiliNovel -sdk iphoneos -configuration Release -archivePath build/BiliNovel.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - name: Package IPA
+        run: mkdir -p build/Payload && cp -R build/BiliNovel.xcarchive/Products/Applications/BiliNovel.app build/Payload/ && cd build && zip -r BiliNovel-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with: { name: BiliNovel-unsigned-ipa, path: ios/build/BiliNovel-unsigned.ipa }

@@ -17,3 +17,7 @@ bili_novel.log
 data/
 caddy_config/
 caddy_data/
+
+.reference/
+ios/build/
+ios/*.xcodeproj/
