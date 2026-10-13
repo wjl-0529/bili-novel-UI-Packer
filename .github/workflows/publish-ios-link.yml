@@ -1,0 +1,21 @@
+name: Publish iOS download link
+on:
+  push:
+    paths: ['.github/workflows/publish-ios-link.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified IPA and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run download 38382405133 --repo "$GH_REPO" --name BiliNovel-unsigned-ipa --dir ipa
+          test -s ipa/BiliNovel-unsigned.ipa
+          gh release view ios-v1.0.0 --repo "$GH_REPO" || gh release create ios-v1.0.0 --repo "$GH_REPO" --target 20178595bbb4e3a24fa2241c437d021f7de12665 --title "iOS 原生版 1.0.0" --notes "SwiftUI 原生 Liquid Glass。无签名 IPA，请导入签名工具后签名安装。iOS 26+；iOS 27 真机尚未验证。chapterlog 混淆章节暂不支持。"
+          gh release upload ios-v1.0.0 ipa/BiliNovel-unsigned.ipa --repo "$GH_REPO" --clobber
