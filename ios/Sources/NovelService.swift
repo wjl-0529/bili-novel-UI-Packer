@@ -139,7 +139,14 @@ actor NovelService {
         var output = ""
         while let current = page {
             guard visited.insert(current).inserted, visited.count <= 100 else { throw NovelError.message("检测到章节分页循环。") }
-            let doc = try await document(current)
+            let isBili = current.host?.contains("wenku8.net") != true
+            let doc: Document
+            if isBili {
+                let rendered = try await RenderedChapter.load(current)
+                doc = try SwiftSoup.parse(rendered, current.absoluteString)
+                // The site's chapterlog has already run in WebKit. Do not restore twice.
+                try doc.select("script[src*=chapterlog]").remove()
+            } else { doc = try await document(current) }
             guard let content = try doc.select("#acontent, .bcontent, #content").first() else { throw NovelError.message("未找到章节正文：\(chapter.title)") }
             try content.select("script, style, ins, .tp, .bd, #contentdp, #contentad").remove()
             if let script = try doc.select("script[src*=chapterlog]").first() {

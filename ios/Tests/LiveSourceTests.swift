@@ -22,6 +22,8 @@ final class LiveSourceTests: XCTestCase {
             let text = try SwiftSoup.parse(body).text()
             XCTAssertGreaterThan(text.count, 100, item.title)
             XCTAssertFalse(text.contains("请登录"), item.title)
+            XCTAssertFalse(text.contains("无法完美使用"), item.title)
+            XCTAssertFalse(text.contains("內容加載失敗"), item.title)
             XCTAssertFalse(text.contains("驗證碼"), item.title)
             print("LIVE_CHAPTER title=\(item.title) characters=\(text.count) sample=\(text.prefix(100))")
             totalBytes += body.utf8.count
