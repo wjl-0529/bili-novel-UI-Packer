@@ -1,5 +1,7 @@
 name: unsigned iOS IPA
 on: [push, workflow_dispatch]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: macos-26
@@ -18,3 +20,10 @@ jobs:
         run: mkdir -p build/Payload && cp -R build/BiliNovel.xcarchive/Products/Applications/BiliNovel.app build/Payload/ && cd build && zip -r BiliNovel-unsigned.ipa Payload
       - uses: actions/upload-artifact@v4
         with: { name: BiliNovel-unsigned-ipa, path: ios/build/BiliNovel-unsigned.ipa }
+
+      - name: Publish IPA direct link
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload ios-v1.0.0 build/BiliNovel-unsigned.ipa --repo "$GH_REPO" --clobber

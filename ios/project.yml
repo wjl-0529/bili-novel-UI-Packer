@@ -18,13 +18,14 @@ targets:
   BiliNovel:
     type: application
     platform: iOS
-    sources: [Sources]
+    sources: [Sources, Resources]
     dependencies:
       - package: SwiftSoup
       - package: ZIPFoundation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bilinovel.native
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: 轻小说打包器
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
