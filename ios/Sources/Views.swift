@@ -34,7 +34,7 @@ struct ImportView: View {
             Section("书名搜索") {
                 TextField("输入小说名称", text: $model.searchText).submitLabel(.search).onSubmit { Task { await model.search() } }
                 Button("搜索") { Task { await model.search() } }.disabled(model.isLoading || model.searchText.isEmpty)
-                ForEach(model.searchResults, id: .self) { url in
+                ForEach(model.searchResults, id: \.self) { url in
                     Button { model.link = url.absoluteString; Task { await model.load(); showBook = model.novel != nil } } label: { Label(url.lastPathComponent, systemImage: "book.closed") }
                 }
             } footer: { Text("支持哔哩轻小说和轻小说文库。网站访问限制可能影响搜索与下载。") }
@@ -91,12 +91,12 @@ struct ChapterPickerView: View {
     var volumes: [String] { novel.chapters.reduce(into: []) { if !$0.contains($1.volume) { $0.append($1.volume) } } }
     var body: some View {
         List {
-            ForEach(volumes,id: .self) { volume in
+            ForEach(volumes,id: \.self) { volume in
                 let chapters = novel.chapters.filter { $0.volume == volume && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
                 if !chapters.isEmpty {
                     Section {
                         Button {
-                            let ids = Set(chapters.map(.id)); if ids.isSubset(of: model.selected) { model.selected.subtract(ids) } else { model.selected.formUnion(ids) }
+                            let ids = Set(chapters.map(\.id)); if ids.isSubset(of: model.selected) { model.selected.subtract(ids) } else { model.selected.formUnion(ids) }
                         } label: { HStack { Text(volume).font(.subheadline.bold()); Spacer(); Text(chapters.allSatisfy { model.selected.contains($0.id) } ? "取消本卷" : "选择本卷").font(.caption) } }
                         ForEach(chapters) { chapter in
                             Button {
@@ -116,9 +116,9 @@ struct ChapterPickerView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("选择全部") { model.selected = Set(novel.chapters.map(.id)) }
+                    Button("选择全部") { model.selected = Set(novel.chapters.map(\.id)) }
                     Button("取消全部") { model.selected.removeAll() }
-                    Button("反向选择") { model.selected = Set(novel.chapters.map(.id)).subtracting(model.selected) }
+                    Button("反向选择") { model.selected = Set(novel.chapters.map(\.id)).subtracting(model.selected) }
                 } label: { Image(systemName: "ellipsis.circle") }
             }
         }
@@ -128,7 +128,7 @@ struct ChapterPickerView: View {
 struct ExportProgressView: View {
     @ObservedObject var model: AppModel
     let cancel: () -> Void
-    @Environment(.dismiss) private var dismiss
+    @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
