@@ -31,13 +31,13 @@ struct ImportView: View {
                     HStack { Label("读取小说", systemImage: "arrow.down.doc"); Spacer(); if model.isLoading { ProgressView() } }
                 }.disabled(model.isLoading || model.link.isEmpty).accessibilityIdentifier("loadNovel")
             }
-            Section("书名搜索") {
+            Section {
                 TextField("输入小说名称", text: $model.searchText).submitLabel(.search).onSubmit { Task { await model.search() } }
                 Button("搜索") { Task { await model.search() } }.disabled(model.isLoading || model.searchText.isEmpty)
                 ForEach(model.searchResults, id: \.self) { url in
                     Button { model.link = url.absoluteString; Task { await model.load(); showBook = model.novel != nil } } label: { Label(url.lastPathComponent, systemImage: "book.closed") }
                 }
-            } footer: { Text("支持哔哩轻小说和轻小说文库。网站访问限制可能影响搜索与下载。") }
+            } header: { Text("书名搜索") } footer: { Text("支持哔哩轻小说和轻小说文库。网站访问限制可能影响搜索与下载。") }
             if let failure = model.failure {
                 Section("读取未完成") { Text(failure).font(.footnote).textSelection(.enabled).foregroundStyle(.red) }
             }
