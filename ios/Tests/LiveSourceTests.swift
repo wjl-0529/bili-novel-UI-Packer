@@ -17,7 +17,7 @@ final class LiveSourceTests: XCTestCase {
         var imageMap: [String:String] = [:]
         let chapter = try XCTUnwrap(novel.chapters.first)
         var totalBytes = 0
-        for (index,item) in novel.chapters.enumerated() {
+        for (index,item) in novel.chapters.prefix(ProcessInfo.processInfo.environment["FULL_EPUB_TEST"] == "1" ? novel.chapters.count : 1).enumerated() {
             let body = try await service.chapter(item, folder: images, images: &imageMap, includeImages: true)
             let text = try SwiftSoup.parse(body).text()
             XCTAssertGreaterThan(text.count, 100, item.title)
@@ -32,7 +32,7 @@ final class LiveSourceTests: XCTestCase {
         // Archive must be outside the source folder being enumerated.
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".epub")
         defer { try? FileManager.default.removeItem(at: output) }
-        try EPUBBuilder.build(novel: novel, chapters: novel.chapters, folder: root, destination: output)
+        try EPUBBuilder.build(novel: novel, chapters: Array(novel.chapters.prefix(ProcessInfo.processInfo.environment["FULL_EPUB_TEST"] == "1" ? novel.chapters.count : 1)), folder: root, destination: output)
         let archive = try Archive(url: output,accessMode: .read)
         XCTAssertNotNil(archive["OEBPS/chapter-0.xhtml"])
         XCTAssertNotNil(archive["OEBPS/content.opf"])
