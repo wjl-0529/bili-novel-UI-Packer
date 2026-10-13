@@ -23,6 +23,11 @@ jobs:
                   time.sleep(6)
                   html=get(host+path if path.startswith('/') else path)
                   print('HOST',host,'LENGTH',len(html))
-                  print(html[:2000]);pos=html.find('acontent');print(html[max(0,pos-300):pos+12000]);print(html[-7000:])
+                  print(html)
+                  for script in re.findall(r'<script[^>]+src=[\"\']([^\"\']+)',html):
+                      if 'readtools' in script or 'chapterlog' in script:
+                          import urllib.parse
+                          print('SCRIPT',script,get(urllib.parse.urljoin(host,script)))
               except Exception as e:print(e)
           PYCODE
+
