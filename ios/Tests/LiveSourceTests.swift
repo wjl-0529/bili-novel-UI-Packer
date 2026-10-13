@@ -16,17 +16,25 @@ final class LiveSourceTests: XCTestCase {
         try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
         var imageMap: [String:String] = [:]
         let chapter = try XCTUnwrap(novel.chapters.first)
-        let body = try await service.chapter(chapter, folder: images, images: &imageMap, includeImages: true)
-        XCTAssertGreaterThan(try SwiftSoup.parse(body).text().count, 100)
-        try Data(EPUBBuilder.page(title: chapter.title, body: body).utf8).write(to: root.appendingPathComponent("OEBPS/chapter-0.xhtml"))
+        var totalBytes = 0
+        for (index,item) in novel.chapters.enumerated() {
+            let body = try await service.chapter(item, folder: images, images: &imageMap, includeImages: true)
+            let text = try SwiftSoup.parse(body).text()
+            XCTAssertGreaterThan(text.count, 100, item.title)
+            XCTAssertFalse(text.contains("请登录"), item.title)
+            XCTAssertFalse(text.contains("驗證碼"), item.title)
+            print("LIVE_CHAPTER title=\(item.title) characters=\(text.count) sample=\(text.prefix(100))")
+            totalBytes += body.utf8.count
+            try Data(EPUBBuilder.page(title: item.title, body: body).utf8).write(to: root.appendingPathComponent("OEBPS/chapter-\(index).xhtml"))
+        }
         // Archive must be outside the source folder being enumerated.
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".epub")
         defer { try? FileManager.default.removeItem(at: output) }
-        try EPUBBuilder.build(novel: novel, chapters: [chapter], folder: root, destination: output)
+        try EPUBBuilder.build(novel: novel, chapters: novel.chapters, folder: root, destination: output)
         let archive = try Archive(url: output,accessMode: .read)
         XCTAssertNotNil(archive["OEBPS/chapter-0.xhtml"])
         XCTAssertNotNil(archive["OEBPS/content.opf"])
-        print("LIVE_EPUB_RESULT chapter=\(chapter.title) bodyBytes=\(body.utf8.count) ipaVersion=1.2.0")
+        print("LIVE_EPUB_RESULT chapter=\(chapter.title) bodyBytes=\(totalBytes) ipaVersion=1.2.0")
         print("LIVE_SOURCE_RESULT title=\(novel.title) chapters=\(novel.chapters.count) hidden=\(novel.hiddenChapterCount)")
     }
 }
