@@ -85,7 +85,11 @@ actor NovelService {
         let catalog = try await document(catalogURL)
         let chapters = try Self.parseCatalog(catalog, wenku: wenku)
         guard !chapters.isEmpty else { throw NovelError.message("目录为空或章节链接被隐藏，不能继续下载。") }
-        return Novel(title: title, author: author, summary: summary, cover: cover.flatMap(URL.init(string:)), url: url, chapters: chapters)
+        let hiddenCount = try catalog.select(".volume-chapters > li.jsChapter a").filter { a in
+            let href = try a.attr("href").lowercased()
+            return href.isEmpty || href.hasPrefix("javascript")
+        }.count
+        return Novel(title: title, author: author, summary: summary, cover: cover.flatMap(URL.init(string:)), url: url, chapters: chapters, hiddenChapterCount: hiddenCount)
     }
 
     static func parseCatalog(_ doc: Document, wenku: Bool) throws -> [Chapter] {
@@ -98,7 +102,7 @@ actor NovelService {
             guard let a = try element.select("a").first() else { continue }
             let href = try a.attr("abs:href")
             guard let url = URL(string: href), ["https", "http"].contains(url.scheme ?? "") else {
-                throw NovelError.message("目录存在隐藏链接，暂不能可靠还原。")
+                continue
             }
             if seen.insert(url).inserted { result.append(Chapter(title: try a.text(), volume: volume, url: url)) }
         }

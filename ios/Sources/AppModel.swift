@@ -124,6 +124,7 @@ struct ContentView: View {
                 }
             }
             if !novel.summary.isEmpty { Text(novel.summary).font(.subheadline).foregroundStyle(.secondary).lineLimit(6) }
+            if novel.hiddenChapterCount > 0 { Label("原站隐藏了 \(novel.hiddenChapterCount) 个章节链接，这些章节尚未加入下载目录。", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange) }
             Toggle("包含插图", isOn: $images).disabled(model.isLoading)
         }.padding(18).background(.background, in: .rect(cornerRadius: 22))
     }
