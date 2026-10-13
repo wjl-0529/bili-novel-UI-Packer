@@ -1,0 +1,17 @@
+name: Withdraw invalid iOS build
+on:
+  push:
+    paths: ['.github/workflows/withdraw-invalid-ios.yml']
+permissions:
+  contents: write
+jobs:
+  withdraw:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view ios-v1.2.0 --repo "$GH_REPO"; then
+            gh release delete ios-v1.2.0 --repo "$GH_REPO" --yes
+          fi
