@@ -4,10 +4,12 @@ import ZIPFoundation
 @testable import BiliNovel
 
 final class FixtureProtocol: URLProtocol {
+    static var lastRequest: URLRequest?
     static var pages: [String: String] = [:]
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        Self.lastRequest = request
         let path = request.url!.path
         let status = Self.pages[path] == nil ? 404 : 200
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type":"text/html; charset=utf-8"])!, cacheStoragePolicy: .notAllowed)
@@ -65,6 +67,14 @@ final class ParityTests: XCTestCase {
         try EPUBBuilder.build(novel: XCTUnwrap(model.novel), chapters: [chapters[0]], folder: root, destination: out)
         let covered = try Archive(url: out, accessMode: .read)
         XCTAssertNotNil(covered["OEBPS/cover.xhtml"]); XCTAssertNotNil(covered["OEBPS/images/cover.jpg"])
+    }
+    func testSearchUsesSourceFormMethodAndFiltersDetailLinks() async throws {
+        FixtureProtocol.pages = ["/": "<form method='post' action='/search'><input name='searchkey'/><input type='hidden' name='type' value='title'/></form>", "/search": "<a href='/novel/5428.html'>书</a><a href='/novel/5428/1.html'>正文</a><a href='/novel/5428.html'>重复</a>"]
+        let results = try await service().search("故事+名称")
+        XCTAssertEqual(results.map(\.path), ["/novel/5428.html"])
+        XCTAssertEqual(FixtureProtocol.lastRequest?.httpMethod, "POST")
+        XCTAssertEqual(FixtureProtocol.lastRequest?.url?.path, "/search")
+        // URLProtocol receives body streams on some Foundation versions; method/route prove POST dispatch.
     }
     func service() -> NovelService {
         let config = URLSessionConfiguration.ephemeral

@@ -26,12 +26,14 @@ actor NovelService {
         return url
     }
 
-    func data(_ url: URL, referer: URL) async throws -> Data {
+    func data(_ url: URL, referer: URL, method: String = "GET", body: Data? = nil) async throws -> Data {
         try Task.checkCancellation()
         let delay = requestInterval - Date().timeIntervalSince(lastRequest)
         if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
         lastRequest = Date()
         var request = URLRequest(url: url)
+        request.httpMethod = method; request.httpBody = body
+        if body != nil { request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type") }
         request.setValue("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
         if url.host?.contains("wenku8.net") == true {
@@ -54,8 +56,8 @@ actor NovelService {
         throw NovelError.message("请求重试失败。")
     }
 
-    func document(_ url: URL) async throws -> Document {
-        let bytes = try await data(url, referer: url)
+    func document(_ url: URL, method: String = "GET", body: Data? = nil) async throws -> Document {
+        let bytes = try await data(url, referer: url, method: method, body: body)
         let gb = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
         guard let html = String(data: bytes, encoding: .utf8) ?? String(data: bytes, encoding: gb) else { throw NovelError.message("无法识别网页编码。") }
         return try SwiftSoup.parse(html, url.absoluteString)
@@ -77,7 +79,14 @@ actor NovelService {
             items.append(URLQueryItem(name: field, value: query))
             components.queryItems = items
             guard let target = components.url else { continue }
-            let result = try await document(target)
+            let method = try form.attr("method").uppercased()
+            let result: Document
+            if method == "POST" {
+                var payload = URLComponents()
+                payload.queryItems = items.filter { item in !(URLComponents(url: action, resolvingAgainstBaseURL: false)?.queryItems ?? []).contains(item) }
+                let encoded = (payload.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B")
+                result = try await document(action, method: "POST", body: Data(encoded.utf8))
+            } else { result = try await document(target) }
             var matches: [URL] = []
             for link in try result.select("a[href]") {
                 guard let url = URL(string: try link.attr("abs:href")), url.host == host,
