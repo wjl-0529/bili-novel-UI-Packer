@@ -3,10 +3,11 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var model = AppModel()
     var body: some View {
-        TabView {
-            NavigationStack { ImportView(model: model) }.tabItem { Label("导入", systemImage: "plus.circle") }
-            NavigationStack { LibraryView(model: model) }.tabItem { Label("书库", systemImage: "books.vertical") }
-            NavigationStack { SettingsView() }.tabItem { Label("设置", systemImage: "gearshape") }
+        TabView(selection: $model.activeTab) {
+            NavigationStack { ImportView(model: model) }.tabItem { Label("导入", systemImage: "plus.circle") }.tag(0)
+            NavigationStack { ExportProgressView(model: model) }.tabItem { Label("打包", systemImage: "shippingbox") }.tag(1)
+            NavigationStack { LibraryView(model: model) }.tabItem { Label("书库", systemImage: "books.vertical") }.tag(2)
+            NavigationStack { SettingsView() }.tabItem { Label("设置", systemImage: "gearshape") }.tag(3)
         }.tint(.indigo)
     }
 }
@@ -14,6 +15,9 @@ struct ContentView: View {
 struct ImportView: View {
     @ObservedObject var model: AppModel
     @State private var showBook = false
+    @State private var source = BookSource.linovelib
+    @State private var bookID = ""
+    @State private var useID = true
     var body: some View {
         List {
             Section {
@@ -23,14 +27,27 @@ struct ImportView: View {
                     Text("导入小说，选择章节，收藏为 EPUB。").font(.subheadline).foregroundStyle(.secondary)
                 }.padding(.vertical, 18)
             }.listRowBackground(Color.clear).listRowSeparator(.hidden)
-            Section("小说链接") {
-                TextField("粘贴详情页链接", text: $model.link).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("novelLink")
+            Section {
+                Picker("导入方式", selection: $useID) {
+                    Text("书籍编号").tag(true)
+                    Text("完整链接").tag(false)
+                }.pickerStyle(.segmented)
+                if useID {
+                    Picker("小说站点", selection: $source) {
+                        ForEach(BookSource.allCases) { site in Text(site.rawValue).tag(site) }
+                    }
+                    TextField("输入书籍编号，例如 5428", text: $bookID).keyboardType(.numberPad).accessibilityIdentifier("bookID")
+                    if let url = source.bookURL(bookID) { Text(url.absoluteString).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+                } else {
+                    TextField("粘贴详情页链接", text: $model.link).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("novelLink")
+                }
                 Button {
+                    if useID, let url = source.bookURL(bookID) { model.link = url.absoluteString }
                     Task { await model.load(); showBook = model.novel != nil }
                 } label: {
-                    HStack { Label("读取小说", systemImage: "arrow.down.doc"); Spacer(); if model.isLoading { ProgressView() } }
-                }.disabled(model.isLoading || model.link.isEmpty).accessibilityIdentifier("loadNovel")
-            }
+                    HStack { Label("查找书籍", systemImage: "magnifyingglass"); Spacer(); if model.isLoading { ProgressView() } }
+                }.disabled(model.isLoading || (useID ? source.bookURL(bookID) == nil : model.link.isEmpty)).accessibilityIdentifier("loadNovel")
+            } header: { Text("导入书籍") } footer: { Text("编号对应所选站点：例如 1.html，只需输入 1。") }
             Section {
                 TextField("输入小说名称", text: $model.searchText).submitLabel(.search).onSubmit { Task { await model.search() } }
                 Button("搜索") { Task { await model.search() } }.disabled(model.isLoading || model.searchText.isEmpty)
@@ -50,8 +67,6 @@ struct BookDetailView: View {
     @ObservedObject var model: AppModel
     let novel: Novel
     @State private var images = true
-    @State private var showProgress = false
-    @State private var operation: Task<Void,Never>?
     var body: some View {
         List {
             Section {
@@ -75,12 +90,10 @@ struct BookDetailView: View {
         }.navigationTitle("书籍详情").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
             Button {
-                showProgress = true
-                operation = Task { await model.export(includeImages: images) }
+                model.startExport(includeImages: images)
             } label: { Label("打包为 EPUB", systemImage: "shippingbox").frame(maxWidth: .infinity).padding(.vertical,8) }
             .buttonStyle(.glassProminent).disabled(model.selected.isEmpty || model.isLoading).padding(.horizontal,20).padding(.vertical,12)
         }
-        .sheet(isPresented: $showProgress) { ExportProgressView(model: model, cancel: { operation?.cancel() }).interactiveDismissDisabled(model.isLoading) }
     }
 }
 
@@ -127,25 +140,45 @@ struct ChapterPickerView: View {
 
 struct ExportProgressView: View {
     @ObservedObject var model: AppModel
-    let cancel: () -> Void
-    @Environment(\.dismiss) private var dismiss
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 24) {
-                Spacer()
-                Image(systemName: model.isLoading ? "shippingbox" : model.shareURL != nil ? "checkmark.circle.fill" : "exclamationmark.triangle").font(.system(size: 56)).foregroundStyle(.indigo)
-                Text(model.isLoading ? "正在整理故事" : model.shareURL != nil ? "EPUB 已就绪" : "打包未完成").font(.title2.bold())
-                if model.isLoading {
+        List {
+            if let started = model.exportStarted {
+                Section {
+                    Label(model.isExporting ? "正在打包" : model.shareURL != nil ? "EPUB 已就绪" : "打包已停止", systemImage: model.isExporting ? "shippingbox" : model.shareURL != nil ? "checkmark.circle.fill" : "pause.circle")
+                        .font(.title2.bold()).foregroundStyle(.indigo).padding(.vertical, 8)
+                    Text(model.exportTitle).font(.headline)
+                    Text(model.status).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
                     ProgressView(value: model.progress).tint(.indigo)
-                    Text("\(model.completedChapters) / \(model.selected.count) 章").font(.headline.monospacedDigit())
-                    Text(model.currentChapter).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                } else { ScrollView { Text(model.status).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: .infinity) }.frame(maxHeight: 180) }
-                Spacer()
-                if let url = model.shareURL { ShareLink(item: url) { Label("保存或分享 EPUB",systemImage: "square.and.arrow.up").frame(maxWidth: .infinity).padding(8) }.buttonStyle(.glassProminent) }
-                if model.isLoading { Button("取消打包",role: .cancel,action: cancel).buttonStyle(.glass) }
-                else { Button("完成") { dismiss() }.buttonStyle(.glass) }
-            }.padding(28).navigationTitle("打包任务").navigationBarTitleDisplayMode(.inline)
-        }
+                }
+                Section("任务详情") {
+                    LabeledContent("来源", value: model.exportSource)
+                    LabeledContent("章节进度", value: "\(model.completedChapters) / \(model.exportTotal)")
+                    if !model.currentChapter.isEmpty { LabeledContent("当前章节", value: model.currentChapter) }
+                    LabeledContent("插图", value: model.exportIncludesImages ? "已下载 \(model.exportImages) 张" : "不包含")
+                    LabeledContent("正文大小", value: ByteCountFormatter.string(fromByteCount: Int64(model.exportBytes), countStyle: .file))
+                    LabeledContent("开始时间") { Text(started, style: .time) }
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        LabeledContent("耗时", value: Duration.seconds(max(0, (model.exportEnded ?? context.date).timeIntervalSince(started))).formatted(.time(pattern: .hourMinuteSecond)))
+                    }
+                    if model.shareURL != nil { LabeledContent("EPUB 大小", value: ByteCountFormatter.string(fromByteCount: Int64(model.exportFileBytes), countStyle: .file)) }
+                }
+                Section {
+                    if let url = model.shareURL { ShareLink(item: url) { Label("保存或分享 EPUB", systemImage: "square.and.arrow.up") } }
+                    if model.isExporting { Button("取消打包", role: .destructive) { model.cancelExport() } }
+                }
+                Section("任务记录") {
+                    ForEach(model.exportEvents.reversed()) { event in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(event.message).font(.subheadline)
+                            Text(event.date, style: .time).font(.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical, 2)
+                    }
+                }
+            } else {
+                ContentUnavailableView("还没有打包任务", systemImage: "shippingbox", description: Text("导入小说并选择章节后，点击“打包为 EPUB”。进度和结果都会保留在这里。"))
+                Button("去导入小说") { model.activeTab = 0 }
+            }
+        }.navigationTitle("打包任务")
     }
 }
 

@@ -3,6 +3,12 @@ import SwiftSoup
 @testable import BiliNovel
 
 final class EPUBTests: XCTestCase {
+    func testBookNumberResolvesSelectedSource() {
+        XCTAssertEqual(BookSource.linovelib.bookURL("1")?.absoluteString, "https://www.linovelib.com/novel/1.html")
+        XCTAssertEqual(BookSource.wenku.bookURL("5428")?.absoluteString, "https://www.wenku8.net/book/5428.htm")
+        for invalid in ["", "0", "-1", "1.html", "https://example.com", "１"] { XCTAssertNil(BookSource.linovelib.bookURL(invalid)) }
+    }
+
     func testRejectsTruncatedSourceBeforeExport() throws {
         let doc = try SwiftSoup.parse("<div><p>这是一段真实正文。</p><p>（內容加載失敗！請刷新或更換瀏覽器）</p></div>")
         XCTAssertThrowsError(try NovelService.validateChapter(XCTUnwrap(doc.select("div").first())))

@@ -36,7 +36,7 @@ final class LiveSourceTests: XCTestCase {
         let archive = try Archive(url: output,accessMode: .read)
         XCTAssertNotNil(archive["OEBPS/chapter-0.xhtml"])
         XCTAssertNotNil(archive["OEBPS/content.opf"])
-        print("LIVE_EPUB_RESULT chapter=\(chapter.title) bodyBytes=\(totalBytes) ipaVersion=1.2.1")
+        print("LIVE_EPUB_RESULT chapter=\(chapter.title) bodyBytes=\(totalBytes) ipaVersion=1.3.0")
         print("LIVE_SOURCE_RESULT title=\(novel.title) chapters=\(novel.chapters.count) hidden=\(novel.hiddenChapterCount)")
     }
 }

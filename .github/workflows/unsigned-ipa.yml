@@ -26,7 +26,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          cp build/BiliNovel-unsigned.ipa build/BiliNovel-1.2.1-unsigned.ipa
-          gh release view ios-v1.2.1 --repo "$GH_REPO" || gh release create ios-v1.2.1 --repo "$GH_REPO" --target "$GITHUB_SHA" --title "iOS 1.2.1 · 正文还原与全新界面" --notes "保留输入域名、备用来源读取、清除旧读取结果；在线验证 5428。"
-          gh release upload ios-v1.2.1 build/BiliNovel-1.2.1-unsigned.ipa --repo "$GH_REPO" --clobber
+          cp build/BiliNovel-unsigned.ipa build/BiliNovel-1.3.0-unsigned.ipa
+          gh release view ios-v1.3.0 --repo "$GH_REPO" || gh release create ios-v1.3.0 --repo "$GH_REPO" --target "$GITHUB_SHA" --title "iOS 1.3.0 · 独立打包任务与编号导入" --notes "新增独立打包标签页、详细任务记录与耗时统计；选择内置站点后输入书籍编号即可读取。"
+          gh release upload ios-v1.3.0 build/BiliNovel-1.3.0-unsigned.ipa --repo "$GH_REPO" --clobber
 
