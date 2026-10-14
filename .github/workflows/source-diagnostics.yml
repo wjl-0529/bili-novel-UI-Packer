@@ -33,10 +33,10 @@ jobs:
                       for path in volume_paths:
                           time.sleep(4)
                           v=urllib.request.urlopen(urllib.request.Request('https://www.linovelib.com'+path,headers={'User-Agent':agent,'Cookie':'night=0'}),timeout=25).read().decode('utf-8')
-                          count=re.search(r'章节目录\s*<sum>\((\d+)\)</sum>',v)
+                          count=re.search(r'章节目录.*?\((\d+)\)',v,re.S)
                           links=set(re.findall(r'/novel/1/\d+\.html',v))
                           print('VOLUME_AUDIT',path,'reported',count.group(1) if count else None,'links',len(links))
-                          assert count and int(count.group(1)) == len(links)
+                          assert count is not None and int(count.group(1)) == len(links)
                           total+=len(links);volume_chapters.update(links)
                       print('FULL_VOLUME_AUDIT',len(volume_paths),total,len(volume_chapters),'missing_in_main',sorted(volume_chapters-chapter_paths),'missing_in_volumes',sorted(chapter_paths-volume_chapters))
                       assert len(volume_paths)==38 and total==444 and len(volume_chapters)==444 and volume_chapters==chapter_paths
@@ -44,4 +44,5 @@ jobs:
                   print('TAIL',h[-4000:])
               except Exception as e: print('ERROR',repr(e)); raise
           PYCODE
+
 
