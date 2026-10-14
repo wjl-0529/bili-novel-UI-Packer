@@ -94,7 +94,12 @@ struct BookDetailView: View {
                 Toggle("合并分卷为一个 EPUB", isOn: $model.combineVolumes)
                 Toggle("正文添加章节标题", isOn: $model.addChapterTitles)
             }
-            if novel.hiddenChapterCount > 0 { Section { Label("有 \(novel.hiddenChapterCount) 个章节地址暂未恢复，已尝试邻章导航；未加入本次打包。", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.secondary) } }
+            if novel.hiddenChapterCount > 0 {
+                Section("未恢复章节") {
+                    Text("已尝试邻章导航，以下章节地址仍不可用，未加入本次打包。").font(.footnote).foregroundStyle(.secondary)
+                    ForEach(novel.unresolvedChapters, id: \.self) { title in Label(title, systemImage: "exclamationmark.triangle").font(.footnote) }
+                }
+            }
             Section { Link("查看原站", destination: novel.url) }
         }.navigationTitle("书籍详情").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {

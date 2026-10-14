@@ -144,6 +144,8 @@ actor NovelService {
         guard !chapters.isEmpty else { throw NovelError.message("目录为空或章节链接被隐藏，不能继续下载。") }
         let hiddenCount = recovered.1
         var novel = Novel(title: title, author: author, summary: summary, cover: cover.flatMap(URL.init(string:)), url: url, chapters: chapters, hiddenChapterCount: hiddenCount)
+        let knownTitles = Set(chapters.map(\.title))
+        novel.unresolvedChapters = try catalog.select(".volume-chapters > li.jsChapter a").map { try $0.text() }.filter { !knownTitles.contains($0) }
         novel.publisher = try doc.select(".tag-small.orange").first()?.text()
         novel.tags = try doc.select(".book-cell .book-meta span em").map { try $0.text() }
         novel.alias = try doc.select(".backupname .bkname-body.gray").first()?.text()
@@ -239,7 +241,9 @@ actor NovelService {
                         let check = try await page(found)
                         let expected = entries[i].title.filter { !$0.isWhitespace }
                         let actual = (try check.select("#atitle").first()?.text() ?? "").filter { !$0.isWhitespace }
-                        guard !actual.isEmpty, actual == expected else { continue }
+                        let expectedNumber = expected.capture(#"^第(\d+)[話话章]"#)
+                        let actualNumber = actual.capture(#"^第(\d+)[話话章]"#)
+                        guard !actual.isEmpty, actual == expected || (expectedNumber != nil && expectedNumber == actualNumber) else { continue }
                         entries[i].url = found; changed = true
                         print("RECOVERED_CHAPTER title=\(entries[i].title) url=\(found)")
                     }
