@@ -4,15 +4,17 @@ import SwiftSoup
 
 actor NovelService {
     private let session: URLSession
+    private let requestInterval: TimeInterval
     private var lastRequest = Date.distantPast
     private var warnings: [String] = []
     func takeWarnings() -> [String] { defer { warnings.removeAll() }; return warnings }
     private var restoreCache: [URL: ChapterRestore] = [:]
-    init() {
+    init(session suppliedSession: URLSession? = nil, requestInterval: TimeInterval = 6) {
+        self.requestInterval = requestInterval
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 25
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        session = URLSession(configuration: config)
+        session = suppliedSession ?? URLSession(configuration: config)
     }
 
     static func supportedURL(_ text: String) throws -> URL {
@@ -26,7 +28,7 @@ actor NovelService {
 
     func data(_ url: URL, referer: URL) async throws -> Data {
         try Task.checkCancellation()
-        let delay = 6 - Date().timeIntervalSince(lastRequest)
+        let delay = requestInterval - Date().timeIntervalSince(lastRequest)
         if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
         lastRequest = Date()
         var request = URLRequest(url: url)
@@ -165,7 +167,7 @@ actor NovelService {
     }
 
     // Preserve every catalog row, then recover missing addresses from adjacent chapter navigation.
-    private func recoverCatalog(_ doc: Document, base: URL) async throws -> ([Chapter], Int) {
+    func recoverCatalog(_ doc: Document, base: URL) async throws -> ([Chapter], Int) {
         var entries: [CatalogEntry] = []
         var volume = "正文"
         for item in try doc.select(".volume-chapters > li") {

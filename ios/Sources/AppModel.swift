@@ -72,8 +72,9 @@ import UIKit
         }
     }
     func continueBatch() { guard !isLoading else { return }; exportTask = Task { await runBatch() } }
-    private let service = NovelService()
-    init() {
+    private let service: NovelService
+    init(service: NovelService = NovelService()) {
+        self.service = service
         let index = LibraryBook.directory.appendingPathComponent("library.json")
         if let data = try? Data(contentsOf: index), let saved = try? JSONDecoder().decode([LibraryBook].self, from: data) { books = saved }
     }
