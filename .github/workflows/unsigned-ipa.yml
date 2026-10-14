@@ -28,7 +28,7 @@ jobs:
         with: { name: BiliNovel-unsigned-ipa, path: ios/build/BiliNovel-unsigned.ipa }
 
       - name: Publish IPA direct link
-        if: success()
+        if: false
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

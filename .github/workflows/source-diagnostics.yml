@@ -1,4 +1,4 @@
-name: Verify upstream Wenku access
+name: Inspect complete book 1 catalog
 on:
   push:
     paths: ['.github/workflows/source-diagnostics.yml']
@@ -10,13 +10,24 @@ jobs:
     steps:
       - run: |
           python3 - <<'PYCODE'
-          import urllib.request
-          ua='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
-          for host in ['www.wenku8.net','www.wenku8.cc','www.wenku8.com']:
+          import urllib.request,re,collections
+          from html.parser import HTMLParser
+          ua='Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36'
+          for agent in [ua,'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36']:
               try:
-                  u='https://'+host+'/book/1.htm'
-                  r=urllib.request.urlopen(urllib.request.Request(u,headers={'User-Agent':ua}),timeout=25)
-                  b=r.read();print('WENKU',host,r.status,len(b),b[:100])
-              except Exception as e:print('WENKU',host,e)
+                  req=urllib.request.Request('https://www.linovelib.com/novel/1/catalog',headers={'User-Agent':agent,'Cookie':'night=0'})
+                  h=urllib.request.urlopen(req,timeout=25).read().decode('utf-8')
+                  print('AGENT',agent,'BYTES',len(h),'TOTAL',re.findall(r'共.{0,20}章',h))
+                  rows=re.findall(r'<li\b[^>]*>.*?</li>',h,re.S)
+                  counts=collections.Counter()
+                  for row in rows:
+                      cl=re.search(r'class=[\"\'](.*?)[\"\']',row)
+                      counts[cl.group(1) if cl else 'none']+=1
+                      if 'jsChapter' not in row and ('/novel/1/' in row or 'chapter' in row.lower()): print('OTHER_ROW',row[:1500])
+                  print('ROW_COUNTS',counts)
+                  print('ALL_CHAPTER_ROWS',len([x for x in rows if 'jsChapter' in x]))
+                  print('HEAD',h[:3000])
+                  print('TAIL',h[-4000:])
+              except Exception as e: print('ERROR',repr(e))
           PYCODE
 
