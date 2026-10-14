@@ -13,6 +13,26 @@ final class LiveSourceTests: XCTestCase {
         XCTAssertEqual(novel.chapters.count, novel.catalogChapterCount)
         XCTAssertEqual(novel.siteReportedCount, novel.catalogChapterCount + novel.catalogVolumeCount)
         XCTAssertEqual(novel.hiddenChapterCount, 0, "Large catalog missing: " + novel.unresolvedChapters.joined(separator: ","))
+        let service = NovelService(requestInterval: 4)
+        let desktop = try await service.document(URL(string: "https://www.linovelib.com/novel/1/catalog")!)
+        let volumes = try desktop.select("a[href]").array().compactMap { link -> URL? in
+            let href = try link.attr("abs:href")
+            guard href.range(of: #"/novel/1/vol_\d+\.html$"#, options: .regularExpression) != nil else { return nil }
+            return URL(string: href)
+        }
+        let volumeURLs = Array(Set(volumes)).sorted { $0.absoluteString < $1.absoluteString }
+        XCTAssertEqual(volumeURLs.count, 38)
+        var expectedPaths = Set<String>()
+        for url in volumeURLs {
+            let doc = try await service.document(url)
+            for link in try doc.select("a[href]") {
+                let href = try link.attr("abs:href")
+                if let chapterURL = URL(string: href), chapterURL.path.range(of: #"^/novel/1/\d+\.html$"#, options: .regularExpression) != nil { expectedPaths.insert(chapterURL.path) }
+            }
+        }
+        XCTAssertEqual(expectedPaths.count, 444)
+        XCTAssertEqual(Set(novel.chapters.map { $0.url.path }), expectedPaths, "Recovered main catalog must match every volume chapter URL")
+        print("LIVE_EXACT_VOLUME_MATCH volumes=38 chapterURLs=444")
         print("LIVE_LARGE_CATALOG title=\(novel.title) chapters=\(novel.chapters.count) unresolved=\(novel.hiddenChapterCount)")
     }
     func testReadWenkuSource() async throws {
