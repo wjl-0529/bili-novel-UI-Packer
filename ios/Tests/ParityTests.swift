@@ -24,6 +24,48 @@ final class ParityTests: XCTestCase {
         XCTAssertEqual(try SwiftSoup.parse(html).text(), "\"故事\" <正文> & ·")
         XCTAssertTrue(html.contains("&lt;正文&gt;"))
     }
+    @MainActor func testManualBatchPausesForEachBook() async throws {
+        FixtureProtocol.pages = ["/novel/1.html": "<h1 class='book-title'>手动</h1>", "/novel/1/catalog": "<ul class='volume-chapters'><li class='jsChapter'><a href='/novel/1/1.html'>一</a></li></ul>"]
+        let model = AppModel(service: service())
+        model.batchManual = true
+        model.batchInput = "https://www.linovelib.com/novel/1.html https://www.linovelib.com/novel/1.html"
+        model.startBatch()
+        for _ in 0..<100 { if model.novel != nil && !model.isBatchRunning { break }; try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNotNil(model.novel); XCTAssertEqual(model.batchRemaining.count, 1)
+        XCTAssertTrue(model.outputURLs.isEmpty)
+        model.continueBatch()
+        for _ in 0..<100 { if model.batchRemaining.isEmpty && !model.isBatchRunning { break }; try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(model.failure); XCTAssertTrue(model.batchRemaining.isEmpty)
+    }
+    @MainActor func testMergedArchiveIncludesCoverAndHierarchicalNavigation() async throws {
+        FixtureProtocol.pages = ["/novel/1/1.html": page("一", previous: "/novel/1/catalog", next: "/novel/1/2.html"), "/novel/1/2.html": page("二", previous: "/novel/1/1.html", next: "/novel/1/catalog")]
+        let chapters = [Chapter(title: "一", volume: "第一卷", url: URL(string: "https://www.linovelib.com/novel/1/1.html")!), Chapter(title: "二", volume: "第二卷", url: URL(string: "https://www.linovelib.com/novel/1/2.html")!)]
+        let model = AppModel(service: service())
+        model.novel = Novel(title: "合并测试", author: "作者", summary: "简介", cover: nil, url: URL(string: "https://www.linovelib.com/novel/1.html")!, chapters: chapters)
+        model.selected = Set(chapters.map(\.id)); model.combineVolumes = true; model.addChapterTitles = true
+        await model.export(includeImages: false)
+        XCTAssertNil(model.failure); XCTAssertEqual(model.outputURLs.count, 1)
+        let archive = try Archive(url: XCTUnwrap(model.outputURLs.first), accessMode: .read)
+        XCTAssertNotNil(archive["OEBPS/chapter-1.xhtml"])
+        func content(_ path: String) throws -> String { var data = Data(); _ = try archive.extract(XCTUnwrap(archive[path])) { data.append($0) }; return String(decoding: data, as: UTF8.self) }
+        XCTAssertTrue(try content("OEBPS/chapter-0.xhtml").contains("<h1>一</h1>"))
+        let nav = try content("OEBPS/nav.xhtml")
+        XCTAssertTrue(nav.contains("第一卷")); XCTAssertTrue(nav.contains("第二卷"))
+        XCTAssertEqual(try SwiftSoup.parse(nav).select("ol > li > ol").count, 2)
+        XCTAssertFalse(model.exportEvents.isEmpty); XCTAssertNotNil(model.exportEnded)
+        // Verify cover packaging independently from source image availability.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let images = root.appendingPathComponent("OEBPS/images")
+        try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data([0xFF,0xD8,0xFF]).write(to: images.appendingPathComponent("cover.jpg"))
+        try Data(EPUBBuilder.page(title: "一", body: "<p>正文</p>").utf8).write(to: root.appendingPathComponent("OEBPS/chapter-0.xhtml"))
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".epub")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try EPUBBuilder.build(novel: XCTUnwrap(model.novel), chapters: [chapters[0]], folder: root, destination: out)
+        let covered = try Archive(url: out, accessMode: .read)
+        XCTAssertNotNil(covered["OEBPS/cover.xhtml"]); XCTAssertNotNil(covered["OEBPS/images/cover.jpg"])
+    }
     func service() -> NovelService {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]
