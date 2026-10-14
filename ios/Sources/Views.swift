@@ -55,6 +55,12 @@ struct ImportView: View {
                     Button { model.link = url.absoluteString; Task { await model.load(); showBook = model.novel != nil } } label: { Label(url.lastPathComponent, systemImage: "book.closed") }
                 }
             } header: { Text("书名搜索") } footer: { Text("支持哔哩轻小说和轻小说文库。网站访问限制可能影响搜索与下载。") }
+            Section("批量书籍") {
+                TextEditor(text: $model.batchInput).frame(minHeight: 80).textInputAutocapitalization(.never).autocorrectionDisabled()
+                Toggle("每本手动选择章节", isOn: $model.batchManual)
+                Button("开始批量处理") { model.startBatch() }.disabled(model.isLoading || model.isBatchRunning || model.batchInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if !model.batchRemaining.isEmpty { Text("剩余 \(model.batchRemaining.count) 本").font(.caption).foregroundStyle(.secondary) }
+            }
             if let failure = model.failure {
                 Section("读取未完成") { Text(failure).font(.footnote).textSelection(.enabled).foregroundStyle(.red) }
             }
@@ -169,6 +175,8 @@ struct ExportProgressView: View {
                         ShareLink(item: url) { Label(url.lastPathComponent, systemImage: "square.and.arrow.up") }
                     }
                     if model.isExporting { Button("取消打包", role: .destructive) { model.cancelExport() } }
+                    if !model.isLoading, !model.isBatchRunning, !model.batchRemaining.isEmpty { Button("处理下一本") { model.continueBatch() } }
+                    ShareLink(item: model.exportEvents.map { $0.date.formatted() + " " + $0.message }.joined(separator: "\n")) { Label("分享任务日志", systemImage: "doc.text") }
                 }
                 Section("任务记录") {
                     ForEach(model.exportEvents.reversed()) { event in

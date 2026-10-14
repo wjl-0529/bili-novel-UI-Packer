@@ -36,12 +36,41 @@ import UIKit
     @Published var isExporting = false
     private var exportTask: Task<Void, Never>?
     func startExport(includeImages: Bool) {
-        guard !isLoading, exportTask == nil else { return }
+        guard !isLoading, !isBatchRunning, exportTask == nil else { return }
         activeTab = 1
         exportTask = Task { await export(includeImages: includeImages) }
     }
     func cancelExport() { exportTask?.cancel() }
     private func record(_ message: String) { exportStatus = message; exportEvents.append(ExportEvent(message: message)) }
+    @Published var batchInput = ""
+    @Published var batchManual = false
+    @Published var batchRemaining: [String] = []
+    @Published var isBatchRunning = false
+    func startBatch() {
+        guard !isLoading, exportTask == nil else { return }
+        let links = batchInput.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !links.isEmpty else { return }
+        for link in links {
+            do { _ = try NovelService.supportedURL(link) }
+            catch { failure = error.localizedDescription; return }
+        }
+        batchRemaining = links
+        Task { await runBatch() }
+    }
+    private func runBatch() async {
+        isBatchRunning = true
+        defer { isBatchRunning = false }
+        while !batchRemaining.isEmpty {
+            link = batchRemaining.removeFirst()
+            await load()
+            guard novel != nil else { batchRemaining = []; return }
+            if batchManual { activeTab = 0; return }
+            activeTab = 1
+            await export(includeImages: true)
+            if failure != nil { batchRemaining = []; return }
+        }
+    }
+    func continueBatch() { Task { await runBatch() } }
     private let service = NovelService()
     init() {
         let index = LibraryBook.directory.appendingPathComponent("library.json")
@@ -141,5 +170,4 @@ import UIKit
         } catch { status = "导出成功，但保存书库失败：\(error.localizedDescription)" }
     }
 }
-
 
