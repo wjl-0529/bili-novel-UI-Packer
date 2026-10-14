@@ -18,7 +18,7 @@ jobs:
       - name: Read actual source using iOS parser
         run: |
           set -o pipefail
-          LIVE_SOURCE_TEST=1 TEST_RUNNER_LIVE_SOURCE_TEST=1 xcodebuild test -scheme BiliNovel -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:BiliNovelTests/LiveSourceTests -resultBundlePath LiveSource.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 | tee live-source.log
+          FULL_EPUB_TEST=1 TEST_RUNNER_FULL_EPUB_TEST=1 LIVE_SOURCE_TEST=1 TEST_RUNNER_LIVE_SOURCE_TEST=1 xcodebuild test -scheme BiliNovel -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:BiliNovelTests/LiveSourceTests -resultBundlePath LiveSource.xcresult CODE_SIGNING_ALLOWED=NO 2>&1 | tee live-source.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -26,3 +26,4 @@ jobs:
           path: |
             ios/live-source.log
             ios/LiveSource.xcresult
+
