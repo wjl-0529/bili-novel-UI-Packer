@@ -89,7 +89,7 @@ struct BookDetailView: View {
             Section("打包内容") {
                 NavigationLink { ChapterPickerView(model: model, novel: novel) } label: {
                     HStack { Label("选择章节", systemImage: "list.bullet"); Spacer(); Text("\(model.selected.count) 章").foregroundStyle(.secondary) }
-                }
+                }.accessibilityIdentifier("chapterPicker")
                 Toggle("包含插图", isOn: $images)
                 Toggle("合并分卷为一个 EPUB", isOn: $model.combineVolumes)
                 Toggle("正文添加章节标题", isOn: $model.addChapterTitles)
@@ -194,6 +194,7 @@ struct ExportProgressView: View {
                 }
             } else {
                 ContentUnavailableView("还没有打包任务", systemImage: "shippingbox", description: Text("导入小说并选择章节后，点击“打包为 EPUB”。进度和结果都会保留在这里。"))
+                Text("尚无任务").accessibilityIdentifier("emptyExport")
                 Button("去导入小说") { model.activeTab = 0 }
             }
         }.navigationTitle("打包任务")
@@ -221,7 +222,7 @@ struct LibraryView: View {
 struct SettingsView: View {
     var body: some View {
         Form {
-            Section("关于") { LabeledContent("版本",value: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")); LabeledContent("构建",value: (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—")) }
+            Section("关于") { LabeledContent("版本",value: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")).accessibilityIdentifier("appVersion"); LabeledContent("构建",value: (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—")) }
             Section("下载说明") { Text("章节与图片依次下载，避免触发站点限流。请在打包期间保持应用在前台。").font(.footnote).foregroundStyle(.secondary) }
             Section { Link("项目与更新",destination: URL(string: "https://github.com/wjl-0529/bili-novel-UI-Packer")!) }
         }.navigationTitle("设置")
