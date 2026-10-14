@@ -3,6 +3,18 @@ import SwiftSoup
 @testable import BiliNovel
 
 final class EPUBTests: XCTestCase {
+    func testTitleAndSeriesOptions() {
+        XCTAssertFalse(EPUBBuilder.page(title: "标题", body: "<p>正文</p>", addTitle: false).contains("<h1>"))
+        XCTAssertTrue(EPUBBuilder.page(title: "标题", body: "<p>正文</p>", addTitle: true).contains("<h1>标题</h1>"))
+        XCTAssertEqual(EPUBBuilder.seriesIndex("第二十一卷"), 21)
+        XCTAssertEqual(EPUBBuilder.seriesIndex("Book 2.5"), 2.5)
+        XCTAssertNil(EPUBBuilder.seriesIndex("短篇集"))
+    }
+    func testWenkuIllustrationsComeFirst() throws {
+        let doc = try SwiftSoup.parse("<table><tr><td class='vcss'>第一卷</td></tr><tr><td class='ccss'><a href='1.htm'>第一章</a></td><td class='ccss'><a href='2.htm'>插图</a></td></tr></table>", "https://www.wenku8.net/novel/1/1/index.htm")
+        XCTAssertEqual(try NovelService.parseCatalog(doc, wenku: true).first?.title, "插图")
+    }
+
     func testBookNumberResolvesSelectedSource() {
         XCTAssertEqual(BookSource.linovelib.bookURL("1")?.absoluteString, "https://www.linovelib.com/novel/1.html")
         XCTAssertEqual(BookSource.wenku.bookURL("5428")?.absoluteString, "https://www.wenku8.net/book/5428.htm")

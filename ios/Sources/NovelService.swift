@@ -249,18 +249,22 @@ actor NovelService {
             for image in try content.select("img") {
                 if !includeImages { try image.remove(); continue }
                 let raw = try image.attr("data-src").isEmpty ? image.attr("src") : image.attr("data-src")
-                guard let url = URL(string: raw, relativeTo: current)?.absoluteURL, ["http", "https"].contains(url.scheme ?? "") else { throw NovelError.message("不支持的插图地址。") }
-                let key = url.absoluteString
-                let name: String
-                if let saved = images[key] { name = saved }
-                else {
-                    let bytes = try await data(url, referer: current)
-                    let ext = Self.imageExtension(bytes)
-                    guard let ext else { throw NovelError.message("插图响应不是支持的图片格式。") }
-                    name = "image-\(images.count).\(ext)"
-                    try bytes.write(to: folder.appendingPathComponent(name))
-                    images[key] = name
+                if raw.contains("<") || raw.isEmpty { try image.remove(); continue }
+                let bytes: Data
+                let key: String
+                if raw.hasPrefix("data:image"), let comma = raw.firstIndex(of: ","), raw[..<comma].contains(";base64"), let decoded = Data(base64Encoded: String(raw[raw.index(after: comma)...])) {
+                    bytes = decoded; key = raw
+                } else {
+                    guard let url = URL(string: raw, relativeTo: current)?.absoluteURL, ["http", "https"].contains(url.scheme ?? "") else { try image.remove(); continue }
+                    key = url.absoluteString
+                    if let name = images[key] { try image.attr("src", "images/" + name); continue }
+                    do { bytes = try await data(url, referer: current) }
+                    catch is CancellationError { throw CancellationError() }
+                    catch { print("IMAGE_WARNING url=\(url) error=\(error.localizedDescription)"); try image.remove(); continue }
                 }
+                guard let ext = Self.imageExtension(bytes) else { print("IMAGE_WARNING unsupported format"); try image.remove(); continue }
+                let name = "image-\(images.count).\(ext)"
+                try bytes.write(to: folder.appendingPathComponent(name)); images[key] = name
                 try image.attr("src", "images/" + name)
             }
             if current.host?.contains("wenku8.net") == true {
