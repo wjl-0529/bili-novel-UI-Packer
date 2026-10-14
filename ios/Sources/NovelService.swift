@@ -30,7 +30,9 @@ actor NovelService {
         var request = URLRequest(url: url)
         request.setValue("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue(referer.absoluteString, forHTTPHeaderField: "Referer")
-        request.setValue("night=0", forHTTPHeaderField: "Cookie")
+        if url.host?.contains("wenku8.net") == true {
+            request.setValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+        } else { request.setValue("night=0", forHTTPHeaderField: "Cookie") }
         request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
         for attempt in 0..<3 {
             let (bytes, response) = try await session.data(for: request)
@@ -100,7 +102,8 @@ actor NovelService {
                 if text.hasPrefix("小说作者：") { author = text.replacingOccurrences(of: "小说作者：", with: "") }
             }
         }
-        let summary = try doc.select("#bookSummary content").first()?.text() ?? ""
+        var summary = try doc.select("#bookSummary content").first()?.text() ?? ""
+        if wenku { summary = try doc.select("#content table").array().dropFirst(2).first()?.select("td").array().dropFirst().first()?.select("span").last()?.text() ?? "" }
         let cover = try doc.select(wenku ? "#content table img" : ".book-layout img").first()?.attr("abs:src")
         let catalogURL: URL
         if wenku {
@@ -260,6 +263,16 @@ actor NovelService {
                 }
                 try image.attr("src", "images/" + name)
             }
+            if current.host?.contains("wenku8.net") == true {
+                var paragraphs = ""
+                for node in content.getChildNodes() {
+                    if let text = node as? TextNode {
+                        let value = text.getWholeText().trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !value.isEmpty { paragraphs += "<p>" + value.xml + "</p>" }
+                    } else { paragraphs += try Self.xhtml(node) }
+                }
+                try content.html(paragraphs)
+            }
             // Rebuild as valid XHTML instead of inserting HTML void tags into EPUB XML.
             output += try Self.xhtml(content)
             page = nil
@@ -288,7 +301,7 @@ actor NovelService {
         guard let element = node as? Element else { return "" }
         let tag = element.tagName().lowercased()
         if ["script", "style", "iframe", "object"].contains(tag) { return "" }
-        if tag == "img" { return "<img src=\"\(try element.attr("src").xml)\" alt=\"插图\" />" }
+        if tag == "img" { return "<div class=\"duokan-image-single\"><img src=\"\(try element.attr("src").xml)\" alt=\"插图\" /></div>" }
         if tag == "br" { return "<br />" }
         let inside = try element.getChildNodes().map { try xhtml($0) }.joined()
         let allowed = ["p", "div", "span", "em", "strong", "b", "i", "h2", "h3", "blockquote"]

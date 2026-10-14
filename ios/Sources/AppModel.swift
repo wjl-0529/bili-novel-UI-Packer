@@ -55,22 +55,23 @@ import UIKit
             catch { failure = error.localizedDescription; return }
         }
         batchRemaining = links
-        Task { await runBatch() }
+        exportTask = Task { await runBatch() }
     }
     private func runBatch() async {
         isBatchRunning = true
-        defer { isBatchRunning = false }
+        defer { isBatchRunning = false; exportTask = nil }
         while !batchRemaining.isEmpty {
+            if Task.isCancelled { batchRemaining = []; return }
             link = batchRemaining.removeFirst()
             await load()
             guard novel != nil else { batchRemaining = []; return }
             if batchManual { activeTab = 0; return }
             activeTab = 1
             await export(includeImages: true)
-            if failure != nil { batchRemaining = []; return }
+            if failure != nil || Task.isCancelled { batchRemaining = []; return }
         }
     }
-    func continueBatch() { Task { await runBatch() } }
+    func continueBatch() { guard !isLoading else { return }; exportTask = Task { await runBatch() } }
     private let service = NovelService()
     init() {
         let index = LibraryBook.directory.appendingPathComponent("library.json")
@@ -99,7 +100,7 @@ import UIKit
         exportStarted = Date(); exportEnded = nil; exportEvents = []; currentChapter = ""
         isExporting = true
         record("开始打包，共 \(chapters.count) 章")
-        defer { isExporting = false; exportEnded = Date(); exportTask = nil }
+        defer { isExporting = false; exportEnded = Date(); if !isBatchRunning { exportTask = nil } }
         outputURLs = []; shareURL = nil; failure = nil; completedChapters = 0; isLoading = true; progress = 0; status = "正在下载章节…"; defer { isLoading = false }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
