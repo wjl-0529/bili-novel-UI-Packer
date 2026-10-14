@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 @main struct BiliNovelApp: App { var body: some Scene { WindowGroup { ContentView() } } }
 
@@ -18,6 +19,9 @@ import SwiftUI
     @Published var searchText = ""
     @Published var searchResults: [URL] = []
     @Published var activeTab = 0
+    @Published var outputURLs: [URL] = []
+    @Published var combineVolumes = true
+    @Published var addChapterTitles = false
     @Published var exportStatus = ""
     @Published var exportTitle = ""
     @Published var exportSource = ""
@@ -67,7 +71,7 @@ import SwiftUI
         isExporting = true
         record("开始打包，共 \(chapters.count) 章")
         defer { isExporting = false; exportEnded = Date(); exportTask = nil }
-        shareURL = nil; failure = nil; completedChapters = 0; isLoading = true; progress = 0; status = "正在下载章节…"; defer { isLoading = false }
+        outputURLs = []; shareURL = nil; failure = nil; completedChapters = 0; isLoading = true; progress = 0; status = "正在下载章节…"; defer { isLoading = false }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let images = root.appendingPathComponent("OEBPS/images"); try? FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
@@ -78,15 +82,51 @@ import SwiftUI
                 let body = try await service.chapter(chapter, folder: images, images: &imageMap, includeImages: includeImages)
                 exportBytes += body.utf8.count; exportImages = imageMap.count
                 record("已完成：" + chapter.title)
-                bodies.append(EPUBBuilder.page(title: chapter.title, body: body)); completedChapters = index + 1; progress = Double(index + 1) / Double(chapters.count)
+                bodies.append(EPUBBuilder.page(title: chapter.title, body: body, addTitle: addChapterTitles)); completedChapters = index + 1; progress = Double(index + 1) / Double(chapters.count)
             }
             try Task.checkCancellation()
             status = "正在生成 EPUB…"; record(status)
-            let oebps = root.appendingPathComponent("OEBPS"); for (index, body) in bodies.enumerated() { try Data(body.utf8).write(to: oebps.appendingPathComponent("chapter-\(index).xhtml")) }
-            let out = FileManager.default.temporaryDirectory.appendingPathComponent("Novel-\(UUID().uuidString).epub"); try? FileManager.default.removeItem(at: out); try EPUBBuilder.build(novel: novel, chapters: chapters, folder: root, destination: out)
-            exportFileBytes = (try out.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            record("EPUB 生成完成")
-            shareURL = out; status = "导出完成，共 \(chapters.count) 章"; save(novel: novel, url: out, count: chapters.count)
+            let volumes = chapters.reduce(into: [String]()) { if !$0.contains($1.volume) { $0.append($1.volume) } }
+            let groups = combineVolumes ? [chapters] : volumes.map { volume in chapters.filter { $0.volume == volume } }
+            for group in groups {
+                try Task.checkCancellation()
+                var book = novel
+                if !combineVolumes, let volume = group.first?.volume { book = Novel(title: novel.title + " " + volume, author: novel.author, summary: novel.summary, cover: novel.volumeCovers[volume] ?? novel.cover, url: novel.url, chapters: group, publisher: novel.publisher, tags: novel.tags) }
+                let package = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: package) }
+                let target = package.appendingPathComponent("OEBPS/images")
+                try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+                for (index,item) in group.enumerated() {
+                    guard let originalIndex = chapters.firstIndex(of: item) else { continue }
+                    try Data(bodies[originalIndex].utf8).write(to: package.appendingPathComponent("OEBPS/chapter-\(index).xhtml"))
+                }
+                for name in imageMap.values { try FileManager.default.copyItem(at: images.appendingPathComponent(name), to: target.appendingPathComponent(name)) }
+                if let cover = book.cover {
+                    do {
+                        let bytes = try await service.data(cover, referer: book.url)
+                        if let ext = NovelService.imageExtension(bytes) { try bytes.write(to: target.appendingPathComponent("cover." + ext)) }
+                    } catch is CancellationError { throw CancellationError() }
+                    catch { record("封面下载失败：" + error.localizedDescription) }
+                }
+                if !(try FileManager.default.contentsOfDirectory(atPath: target.path)).contains(where: { $0.hasPrefix("cover.") }) {
+                    let names = imageMap.values.sorted()
+                    let portrait = names.first { name in
+                        guard let image = UIImage(contentsOfFile: target.appendingPathComponent(name).path) else { return false }
+                        return image.size.width < image.size.height
+                    } ?? names.first
+                    if let name = portrait { try FileManager.default.copyItem(at: target.appendingPathComponent(name), to: target.appendingPathComponent("cover." + URL(fileURLWithPath: name).pathExtension)) }
+                }
+                let filename = book.title.replacingOccurrences(of: #"[/:*?"<>|\\]"#, with: " ", options: .regularExpression).prefix(100)
+                let outputFolder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
+                let out = outputFolder.appendingPathComponent(String(filename) + ".epub")
+                try EPUBBuilder.build(novel: book, chapters: group, folder: package, destination: out)
+                exportFileBytes += (try out.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                outputURLs.append(out); shareURL = out
+                save(novel: book, url: out, count: group.count)
+                record("已生成：" + out.lastPathComponent)
+            }
+            status = "导出完成，共 \(chapters.count) 章、\(outputURLs.count) 个 EPUB"; record(status)
         } catch is CancellationError {
             status = "已取消打包"; record(status)
         } catch { status = error.localizedDescription; failure = status; record("失败：" + status) }

@@ -84,6 +84,8 @@ struct BookDetailView: View {
                     HStack { Label("选择章节", systemImage: "list.bullet"); Spacer(); Text("\(model.selected.count) 章").foregroundStyle(.secondary) }
                 }
                 Toggle("包含插图", isOn: $images)
+                Toggle("合并分卷为一个 EPUB", isOn: $model.combineVolumes)
+                Toggle("正文添加章节标题", isOn: $model.addChapterTitles)
             }
             if novel.hiddenChapterCount > 0 { Section { Label("有 \(novel.hiddenChapterCount) 个章节地址暂未恢复，已尝试邻章导航；未加入本次打包。", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.secondary) } }
             Section { Link("查看原站", destination: novel.url) }
@@ -163,7 +165,9 @@ struct ExportProgressView: View {
                     if model.shareURL != nil { LabeledContent("EPUB 大小", value: ByteCountFormatter.string(fromByteCount: Int64(model.exportFileBytes), countStyle: .file)) }
                 }
                 Section {
-                    if let url = model.shareURL { ShareLink(item: url) { Label("保存或分享 EPUB", systemImage: "square.and.arrow.up") } }
+                    ForEach(model.outputURLs, id: \.self) { url in
+                        ShareLink(item: url) { Label(url.lastPathComponent, systemImage: "square.and.arrow.up") }
+                    }
                     if model.isExporting { Button("取消打包", role: .destructive) { model.cancelExport() } }
                 }
                 Section("任务记录") {

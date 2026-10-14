@@ -112,7 +112,20 @@ actor NovelService {
         let chapters = recovered.0
         guard !chapters.isEmpty else { throw NovelError.message("目录为空或章节链接被隐藏，不能继续下载。") }
         let hiddenCount = recovered.1
-        return Novel(title: title, author: author, summary: summary, cover: cover.flatMap(URL.init(string:)), url: url, chapters: chapters, hiddenChapterCount: hiddenCount)
+        var novel = Novel(title: title, author: author, summary: summary, cover: cover.flatMap(URL.init(string:)), url: url, chapters: chapters, hiddenChapterCount: hiddenCount)
+        novel.publisher = try doc.select(".tag-small.orange").first()?.text()
+        novel.tags = try doc.select(".book-cell .book-meta span em").map { try $0.text() }
+        novel.alias = try doc.select(".backupname .bkname-body.gray").first()?.text()
+        novel.publicationStatus = try doc.select(".book-cell .book-meta+.book-meta").first()?.text()
+        var currentVolume = "正文"
+        for item in try catalog.select(".volume-chapters > li") {
+            if item.hasClass("chapter-bar") { currentVolume = try item.text() }
+            if item.hasClass("volume-cover"), let img = try item.select("img").first() {
+                let raw = try img.attr("data-src").isEmpty ? img.attr("src") : img.attr("data-src")
+                if !raw.contains("book-cover-no"), let cover = URL(string: raw, relativeTo: catalogURL)?.absoluteURL { novel.volumeCovers[currentVolume] = cover }
+            }
+        }
+        return novel
     }
 
     static func parseCatalog(_ doc: Document, wenku: Bool) throws -> [Chapter] {
@@ -128,6 +141,10 @@ actor NovelService {
                 continue
             }
             if seen.insert(url).inserted { result.append(Chapter(title: try a.text(), volume: volume, url: url)) }
+        }
+        if wenku {
+            let volumes = result.reduce(into: [String]()) { if !$0.contains($1.volume) { $0.append($1.volume) } }
+            return volumes.flatMap { volume in result.filter { $0.volume == volume && $0.title == "插图" } + result.filter { $0.volume == volume && $0.title != "插图" } }
         }
         return result
     }
@@ -283,6 +300,8 @@ actor NovelService {
         if prefix.starts(with: [0xFF, 0xD8, 0xFF]) { return "jpg" }
         if prefix.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "png" }
         if prefix.starts(with: [0x47, 0x49, 0x46]) { return "gif" }
+        if prefix.starts(with: [0x42, 0x4D]) { return "bmp" }
+        if prefix.starts(with: [0x52, 0x49, 0x46, 0x46]), prefix.count >= 12, Array(prefix[8..<12]) == [0x57,0x45,0x42,0x50] { return "webp" }
         return nil
     }
 }
