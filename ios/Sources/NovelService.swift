@@ -108,12 +108,10 @@ actor NovelService {
             catalogURL = link
         } else { catalogURL = URL(string: "\(biliHost)/novel/\(id)/catalog")! }
         let catalog = try await document(catalogURL)
-        let chapters = try Self.parseCatalog(catalog, wenku: wenku)
+        let recovered = wenku ? (try Self.parseCatalog(catalog, wenku: true), 0) : try await recoverCatalog(catalog, base: catalogURL)
+        let chapters = recovered.0
         guard !chapters.isEmpty else { throw NovelError.message("目录为空或章节链接被隐藏，不能继续下载。") }
-        let hiddenCount = try catalog.select(".volume-chapters > li.jsChapter a").filter { a in
-            let href = try a.attr("href").lowercased()
-            return href.isEmpty || href.hasPrefix("javascript")
-        }.count
+        let hiddenCount = recovered.1
         return Novel(title: title, author: author, summary: summary, cover: cover.flatMap(URL.init(string:)), url: url, chapters: chapters, hiddenChapterCount: hiddenCount)
     }
 
@@ -132,6 +130,77 @@ actor NovelService {
             if seen.insert(url).inserted { result.append(Chapter(title: try a.text(), volume: volume, url: url)) }
         }
         return result
+    }
+
+    private struct CatalogEntry {
+        let title: String
+        let volume: String
+        var url: URL?
+    }
+
+    // Preserve every catalog row, then recover missing addresses from adjacent chapter navigation.
+    private func recoverCatalog(_ doc: Document, base: URL) async throws -> ([Chapter], Int) {
+        var entries: [CatalogEntry] = []
+        var volume = "正文"
+        for item in try doc.select(".volume-chapters > li") {
+            if item.hasClass("chapter-bar") { volume = try item.text(); continue }
+            guard item.hasClass("jsChapter"), let link = try item.select("a").first() else { continue }
+            let raw = try link.attr("href")
+            let candidate = URL(string: raw, relativeTo: base)?.absoluteURL
+            let url = !raw.isEmpty && !raw.lowercased().hasPrefix("javascript") && candidate?.host == base.host && candidate?.path.hasSuffix(".html") == true ? candidate : nil
+            entries.append(CatalogEntry(title: try link.text(), volume: volume, url: url))
+        }
+        var cache: [URL: Document] = [:]
+        func page(_ url: URL) async throws -> Document {
+            if let cached = cache[url] { return cached }
+            let result = try await document(url); cache[url] = result; return result
+        }
+        func navigation(_ doc: Document, current: URL, previous: Bool) throws -> (URL, Bool)? {
+            let selector = previous ? "#footlink a.prevlink" : "#footlink a.nextlink"
+            guard let link = try doc.select(selector).first() else { return nil }
+            let label = try link.text()
+            if label.contains("目录") || label.contains("目錄") { return nil }
+            let key = previous ? "url_previous" : "url_next"
+            let href = try doc.outerHtml().capture(key + #"\s*:\s*['"]([^'"]+)"#) ?? link.attr("href")
+            guard let url = URL(string: href, relativeTo: current)?.absoluteURL,
+                  url.host == base.host, url.path.hasPrefix(base.path.replacingOccurrences(of: "catalog", with: "")), url.path.hasSuffix(".html") else { return nil }
+            return (url, ["上一页", "上一頁", "下一页", "下一頁"].contains(label))
+        }
+        // Repeat to support runs of consecutive hidden links, without guessing numeric chapter IDs.
+        for _ in 0..<entries.count {
+            var changed = false
+            for i in entries.indices where entries[i].url == nil {
+                try Task.checkCancellation()
+                var found: URL?
+                do {
+                    if i + 1 < entries.count, let next = entries[i+1].url {
+                        let doc = try await page(next)
+                        if let nav = try navigation(doc, current: next, previous: true), !nav.1 { found = nav.0 }
+                    }
+                    if found == nil, i > 0, var previous = entries[i-1].url {
+                        var visited = Set<URL>()
+                        for _ in 0..<20 {
+                            guard visited.insert(previous).inserted else { break }
+                            let doc = try await page(previous)
+                            guard let nav = try navigation(doc, current: previous, previous: false) else { break }
+                            if !nav.1 { found = nav.0; break }
+                            previous = nav.0
+                        }
+                    }
+                    if let found, !entries.contains(where: { $0.url == found }) {
+                        let check = try await page(found)
+                        let expected = entries[i].title.filter { !$0.isWhitespace }
+                        let actual = (try check.select("#atitle").first()?.text() ?? "").filter { !$0.isWhitespace }
+                        guard !actual.isEmpty, actual == expected else { continue }
+                        entries[i].url = found; changed = true
+                        print("RECOVERED_CHAPTER title=\(entries[i].title) url=\(found)")
+                    }
+                } catch is CancellationError { throw CancellationError() }
+                catch { print("CHAPTER_RECOVERY_FAILED title=\(entries[i].title) reason=\(error.localizedDescription)") }
+            }
+            if !changed { break }
+        }
+        return (entries.compactMap { item in item.url.map { Chapter(title: item.title, volume: item.volume, url: $0) } }, entries.filter { $0.url == nil }.count)
     }
 
     func chapter(_ chapter: Chapter, folder: URL, images: inout [String: String], includeImages: Bool) async throws -> String {

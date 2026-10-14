@@ -10,6 +10,7 @@ final class LiveSourceTests: XCTestCase {
         let novel = try await service.load("https://www.linovelib.com/novel/5428.html")
         XCTAssertFalse(novel.title.isEmpty)
         XCTAssertFalse(novel.chapters.isEmpty)
+        XCTAssertEqual(novel.hiddenChapterCount, 0, "5428 hidden chapter must be recovered")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let images = root.appendingPathComponent("OEBPS/images")
@@ -36,7 +37,7 @@ final class LiveSourceTests: XCTestCase {
         let archive = try Archive(url: output,accessMode: .read)
         XCTAssertNotNil(archive["OEBPS/chapter-0.xhtml"])
         XCTAssertNotNil(archive["OEBPS/content.opf"])
-        print("LIVE_EPUB_RESULT chapter=\(chapter.title) bodyBytes=\(totalBytes) ipaVersion=1.3.0")
+        print("LIVE_EPUB_RESULT chapter=\(chapter.title) bodyBytes=\(totalBytes) ipaVersion=1.3.1")
         print("LIVE_SOURCE_RESULT title=\(novel.title) chapters=\(novel.chapters.count) hidden=\(novel.hiddenChapterCount)")
     }
 }

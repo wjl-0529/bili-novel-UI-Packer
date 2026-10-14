@@ -85,7 +85,7 @@ struct BookDetailView: View {
                 }
                 Toggle("包含插图", isOn: $images)
             }
-            if novel.hiddenChapterCount > 0 { Section { Label("有 \(novel.hiddenChapterCount) 个章节链接未公开，暂未加入目录。", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.secondary) } }
+            if novel.hiddenChapterCount > 0 { Section { Label("有 \(novel.hiddenChapterCount) 个章节地址暂未恢复，已尝试邻章导航；未加入本次打包。", systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.secondary) } }
             Section { Link("查看原站", destination: novel.url) }
         }.navigationTitle("书籍详情").navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
