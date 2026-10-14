@@ -343,7 +343,7 @@ actor NovelService {
     }
 
     static func xhtml(_ node: Node) throws -> String {
-        if let text = node as? TextNode { return text.getWholeText().xml }
+        if let text = node as? TextNode { return normalizeSourceText(text.getWholeText()).xml }
         guard let element = node as? Element else { return "" }
         let tag = element.tagName().lowercased()
         if ["script", "style", "iframe", "object"].contains(tag) { return "" }
@@ -352,6 +352,16 @@ actor NovelService {
         let inside = try element.getChildNodes().map { try xhtml($0) }.joined()
         let allowed = ["p", "div", "span", "em", "strong", "b", "i", "h2", "h3", "blockquote"]
         return allowed.contains(tag) ? "<\(tag)>\(inside)</\(tag)>" : inside
+    }
+
+    static func normalizeSourceText(_ input: String) -> String {
+        // Match upstream's literal/full-width entity table before XML escaping.
+        let entities: [(String, String)] = [("quot", "\""), ("amp", "&"), ("lt", "<"), ("gt", ">"), ("nbsp", " "), ("middot", "·"), ("raquo", "?"), ("frac14", "?"), ("frac12", "?"), ("frac34", "?"), ("iquest", "?")]
+        var result = input
+        for (name, value) in entities {
+            for prefix in ["&", "＆"] { result = result.replacingOccurrences(of: prefix + name + ";", with: value) }
+        }
+        return result
     }
 
     static func imageExtension(_ bytes: Data) -> String? {

@@ -86,6 +86,13 @@ struct BookDetailView: View {
                 }.frame(maxWidth: .infinity).padding(.vertical, 20)
             }.listRowBackground(Color.clear).listRowSeparator(.hidden)
             if !novel.summary.isEmpty { Section("简介") { Text(novel.summary).font(.subheadline).foregroundStyle(.secondary) } }
+            Section("作品信息") {
+                if let alias = novel.alias, !alias.isEmpty { LabeledContent("别名", value: alias) }
+                if let status = novel.publicationStatus, !status.isEmpty { LabeledContent("连载状态", value: status) }
+                if let publisher = novel.publisher, !publisher.isEmpty { LabeledContent("出版社", value: publisher) }
+                if !novel.tags.isEmpty { LabeledContent("标签", value: novel.tags.joined(separator: " · ")) }
+                LabeledContent("分卷", value: String(Set(novel.chapters.map(\.volume)).count))
+            }
             Section("打包内容") {
                 NavigationLink { ChapterPickerView(model: model, novel: novel) } label: {
                     HStack { Label("选择章节", systemImage: "list.bullet"); Spacer(); Text("\(model.selected.count) 章").foregroundStyle(.secondary) }

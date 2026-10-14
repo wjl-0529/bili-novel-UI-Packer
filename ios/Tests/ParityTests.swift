@@ -18,6 +18,12 @@ final class FixtureProtocol: URLProtocol {
 }
 
 final class ParityTests: XCTestCase {
+    func testLiteralEntitiesAreRestoredAndSafelyEscaped() throws {
+        let doc = try SwiftSoup.parse("<p>＆quot;故事＆quot; ＆lt;正文＆gt; ＆amp; ＆middot;</p>")
+        let html = try NovelService.xhtml(try XCTUnwrap(doc.select("p").first()))
+        XCTAssertEqual(try SwiftSoup.parse(html).text(), "\"故事\" <正文> & ·")
+        XCTAssertTrue(html.contains("&lt;正文&gt;"))
+    }
     func service() -> NovelService {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]
