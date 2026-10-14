@@ -4,6 +4,13 @@ import SwiftSoup
 @testable import BiliNovel
 
 final class LiveSourceTests: XCTestCase {
+    func testRecoverLargeBookCatalog() async throws {
+        guard ProcessInfo.processInfo.environment["LIVE_SOURCE_TEST"] == "1" else { throw XCTSkip("Live source test is opt-in") }
+        let novel = try await NovelService().load("https://www.linovelib.com/novel/1.html")
+        XCTAssertGreaterThan(novel.chapters.count, 400)
+        XCTAssertEqual(novel.hiddenChapterCount, 0, "Large catalog missing: " + novel.unresolvedChapters.joined(separator: ","))
+        print("LIVE_LARGE_CATALOG title=\(novel.title) chapters=\(novel.chapters.count) unresolved=\(novel.hiddenChapterCount)")
+    }
     func testReadWenkuSource() async throws {
         guard ProcessInfo.processInfo.environment["LIVE_SOURCE_TEST"] == "1" else { throw XCTSkip("Live source test is opt-in") }
         let service = NovelService()
