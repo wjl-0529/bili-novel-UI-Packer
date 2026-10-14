@@ -159,6 +159,12 @@ actor NovelService {
         guard !chapters.isEmpty else { throw NovelError.message("目录为空或章节链接被隐藏，不能继续下载。") }
         let hiddenCount = recovered.1
         var novel = Novel(title: title, author: author, summary: summary, cover: cover.flatMap(URL.init(string:)), url: url, chapters: chapters, hiddenChapterCount: hiddenCount)
+        if !wenku {
+            let accounting = try Self.catalogAccounting(catalog)
+            novel.siteReportedCount = accounting.reported
+            novel.catalogVolumeCount = accounting.volumes
+            novel.catalogChapterCount = accounting.chapters
+        }
         let knownTitles = Set(chapters.map(\.title))
         novel.unresolvedChapters = try catalog.select(".volume-chapters > li.jsChapter a").map { try $0.text() }.filter { !knownTitles.contains($0) }
         novel.publisher = try doc.select(".tag-small.orange").first()?.text()
@@ -184,6 +190,14 @@ actor NovelService {
             }
         }
         return novel
+    }
+
+    static func catalogAccounting(_ doc: Document) throws -> (reported: Int?, volumes: Int, chapters: Int) {
+        let text = try doc.text()
+        let reported = text.capture(#"共\s*(\d+)\s*章"#).flatMap(Int.init)
+        let volumes = try doc.select(".volume-chapters > li.chapter-bar").count
+        let chapters = try doc.select(".volume-chapters > li.jsChapter").count
+        return (reported, volumes, chapters)
     }
 
     static func parseCatalog(_ doc: Document, wenku: Bool) throws -> [Chapter] {

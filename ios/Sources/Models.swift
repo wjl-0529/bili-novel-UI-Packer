@@ -14,6 +14,9 @@ struct Novel: Codable {
     let cover: URL?
     let url: URL
     let chapters: [Chapter]
+    var siteReportedCount: Int? = nil
+    var catalogVolumeCount: Int = 0
+    var catalogChapterCount: Int = 0
     var hiddenChapterCount: Int = 0
     var unresolvedChapters: [String] = []
     var publisher: String? = nil

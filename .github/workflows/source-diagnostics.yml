@@ -26,6 +26,11 @@ jobs:
                       if 'jsChapter' not in row and ('/novel/1/' in row or 'chapter' in row.lower()): print('OTHER_ROW',row[:1500])
                   print('ROW_COUNTS',counts)
                   print('ALL_CHAPTER_ROWS',len([x for x in rows if 'jsChapter' in x]))
+                  if agent == ua:
+                      for path in ['/novel/1/vol_1.html','/novel/1/vol_9.html']:
+                          v=urllib.request.urlopen(urllib.request.Request('https://www.linovelib.com'+path,headers={'User-Agent':agent,'Cookie':'night=0'}),timeout=25).read().decode('utf-8')
+                          print('VOLUME_PAGE',path,'HEADINGS',re.findall(r'<h[123][^>]*>(.*?)</h[123]>',v,re.S),'BODY',re.findall(r'<(?:div|article)[^>]*id=[\"\'](?:acontent|content)[\"\'][^>]*>(.{0,500})',v,re.S))
+                          print('VOLUME_CHAPTER_LINKS',path,re.findall(r'href=[\"\'](/novel/1/\d+\.html)[\"\']',v))
                   print('HEAD',h[:3000])
                   print('TAIL',h[-4000:])
               except Exception as e: print('ERROR',repr(e))

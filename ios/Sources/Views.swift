@@ -100,6 +100,16 @@ struct BookDetailView: View {
                 if let publisher = novel.publisher, !publisher.isEmpty { LabeledContent("出版社", value: publisher) }
                 if !novel.tags.isEmpty { LabeledContent("标签", value: novel.tags.joined(separator: " · ")) }
                 LabeledContent("分卷", value: String(Set(novel.chapters.map(\.volume)).count))
+                if let reported = novel.siteReportedCount {
+                    LabeledContent("原站标注", value: "\(reported) 章")
+                    LabeledContent("目录章节", value: "\(novel.catalogChapterCount) 项")
+                    LabeledContent("目录分卷标题", value: "\(novel.catalogVolumeCount) 项")
+                    if reported == novel.catalogChapterCount + novel.catalogVolumeCount && reported != novel.catalogChapterCount {
+                        Text("原站标注数等于章节项与分卷标题之和。分卷标题是目录入口，不作为正文章节重复下载。").font(.footnote).foregroundStyle(.secondary)
+                    } else if reported != novel.catalogChapterCount {
+                        Text("原站标注与实际目录项数不一致，不能据此确认目录完整。").font(.footnote).foregroundStyle(.orange)
+                    }
+                }
             }
             Section("打包内容") {
                 NavigationLink { ChapterPickerView(model: model, novel: novel) } label: {

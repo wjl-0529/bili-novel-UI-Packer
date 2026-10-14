@@ -104,6 +104,13 @@ final class ParityTests: XCTestCase {
         XCTAssertEqual(model.status, "已取消读取")
         XCTAssertNil(model.failure)
     }
+    func testCatalogAccountingSeparatesVolumeTitlesFromChapterRows() throws {
+        let doc = try SwiftSoup.parse("<p>共<output>5</output>章</p><ul class='volume-chapters'><li class='chapter-bar'>卷一</li><li class='volume-cover'><img/></li><li class='jsChapter'><a>一</a></li><li class='jsChapter'><a>二</a></li><li class='chapter-bar'>卷二</li><li class='jsChapter'><a>三</a></li></ul>")
+        let result = try NovelService.catalogAccounting(doc)
+        XCTAssertEqual(result.reported, 5)
+        XCTAssertEqual(result.volumes, 2)
+        XCTAssertEqual(result.chapters, 3)
+    }
     func service() -> NovelService {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]
