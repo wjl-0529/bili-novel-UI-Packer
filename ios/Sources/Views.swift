@@ -43,18 +43,26 @@ struct ImportView: View {
                 }
                 Button {
                     if useID, let url = source.bookURL(bookID) { model.link = url.absoluteString }
-                    Task { await model.load(); showBook = model.novel != nil }
+                    model.startLookup()
                 } label: {
                     HStack { Label("查找书籍", systemImage: "magnifyingglass"); Spacer(); if model.isLoading { ProgressView() } }
                 }.disabled(model.isLoading || (useID ? source.bookURL(bookID) == nil : model.link.isEmpty)).accessibilityIdentifier("loadNovel")
             } header: { Text("导入书籍") } footer: { Text("编号对应所选站点：例如 1.html，只需输入 1。") }
             Section {
-                TextField("输入小说名称", text: $model.searchText).submitLabel(.search).onSubmit { Task { await model.search(source: source) } }
-                Button("搜索") { Task { await model.search(source: source) } }.disabled(model.isLoading || model.searchText.isEmpty)
+                TextField("输入小说名称", text: $model.searchText).submitLabel(.search).onSubmit { model.startSearch(source: source) }
+                Button("搜索") { model.startSearch(source: source) }.disabled(model.isLoading || model.searchText.isEmpty)
                 ForEach(model.searchResults, id: \.self) { url in
-                    Button { model.link = url.absoluteString; Task { await model.load(); showBook = model.novel != nil } } label: { Label(url.lastPathComponent, systemImage: "book.closed") }
+                    Button { model.link = url.absoluteString; model.startLookup() } label: { Label(url.lastPathComponent, systemImage: "book.closed") }
                 }
             } header: { Text("书名搜索") } footer: { Text("支持哔哩轻小说和轻小说文库。网站访问限制可能影响搜索与下载。") }
+            if model.isLoading && !model.isExporting {
+                Section("查找进度") {
+                    Text(model.status).font(.footnote).textSelection(.enabled)
+                    Button("取消查找", role: .cancel) { model.cancelLookup() }
+                }
+            } else if !model.status.isEmpty && model.failure == nil {
+                Section { Text(model.status).font(.footnote).foregroundStyle(.secondary) }
+            }
             Section("批量书籍") {
                 TextEditor(text: $model.batchInput).frame(minHeight: 80).textInputAutocapitalization(.never).autocorrectionDisabled()
                 Toggle("每本手动选择章节", isOn: $model.batchManual)

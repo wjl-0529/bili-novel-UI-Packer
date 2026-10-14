@@ -79,17 +79,49 @@ import UIKit
         if let data = try? Data(contentsOf: index), let saved = try? JSONDecoder().decode([LibraryBook].self, from: data) { books = saved }
     }
 
+    private var lookupTask: Task<Void, Never>?
+    func startLookup() {
+        guard !isLoading, lookupTask == nil else { return }
+        lookupTask = Task { await load(); lookupTask = nil }
+    }
+    func startSearch(source: BookSource) {
+        guard !isLoading, lookupTask == nil else { return }
+        lookupTask = Task { await search(source: source); lookupTask = nil }
+    }
+    func cancelLookup() { lookupTask?.cancel() }
     func search(source: BookSource = .linovelib) async {
         guard !isLoading else { return }
         failure = nil
-        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { status = "请输入书名"; return }
-        isLoading = true; defer { isLoading = false }; do { searchResults = try await service.search(searchText, source: source); status = searchResults.isEmpty ? "没有找到结果" : "找到 \(searchResults.count) 个结果" } catch { status = "搜索失败：\(error.localizedDescription)"; failure = status }
+        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { status = "请输入书名"; return }
+        let query = searchText
+        let reader = service
+        isLoading = true; status = "正在搜索（最多等待 30 秒）…"; defer { isLoading = false }
+        do {
+            searchResults = try await withThrowingTaskGroup(of: [URL].self) { group in
+                group.addTask { try await reader.search(query, source: source) }
+                group.addTask { try await Task.sleep(for: .seconds(30)); throw NovelError.message("搜索超时。源站可能拒绝访问，请改用书籍编号或粘贴完整链接。") }
+                defer { group.cancelAll() }
+                return try await group.next()!
+            }
+            status = searchResults.isEmpty ? "没有找到结果" : "找到 \(searchResults.count) 个结果"
+        } catch is CancellationError { status = "已取消搜索" }
+        catch { status = "搜索失败：\(error.localizedDescription)"; failure = status }
     }
 
     func load() async {
         guard !isLoading else { return }
         failure = nil; isLoading = true; status = "读取书籍和目录…"; novel = nil; selected.removeAll(); defer { isLoading = false }
-        do { let result = try await service.load(link); novel = result; selected = Set(result.chapters.map(\.id)); status = "已找到 \(result.chapters.count) 个章节" }
+        let input = link
+        let reader = service
+        do {
+            let result = try await withThrowingTaskGroup(of: Novel.self) { group in
+                group.addTask { try await reader.load(input, progress: { message in await MainActor.run { self.status = message } }) }
+                group.addTask { try await Task.sleep(for: .seconds(600)); throw NovelError.message("读取超时。源站可能拒绝访问，请改用书籍编号或粘贴可打开的链接。") }
+                defer { group.cancelAll() }
+                return try await group.next()!
+            }
+            novel = result; selected = Set(result.chapters.map(\.id)); status = "已找到 \(result.chapters.count) 个章节"
+        } catch is CancellationError { status = "已取消读取" }
         catch { status = error.localizedDescription; failure = status }
     }
 

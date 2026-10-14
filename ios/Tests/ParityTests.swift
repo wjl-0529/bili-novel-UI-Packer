@@ -76,6 +76,34 @@ final class ParityTests: XCTestCase {
         XCTAssertEqual(FixtureProtocol.lastRequest?.url?.path, "/search")
         // URLProtocol receives body streams on some Foundation versions; method/route prove POST dispatch.
     }
+    @MainActor func testLookupFailureClearsSpinnerAndShowsError() async throws {
+        FixtureProtocol.pages = [:]
+        let model = AppModel(service: service())
+        model.link = "https://www.linovelib.com/novel/5428.html"
+        await model.load()
+        XCTAssertFalse(model.isLoading)
+        XCTAssertNil(model.novel)
+        XCTAssertNotNil(model.failure)
+        model.searchText = "故事"
+        await model.search()
+        XCTAssertFalse(model.isLoading)
+        XCTAssertNotNil(model.failure)
+    }
+    @MainActor func testLookupCanBeCancelledDuringRateLimitWait() async throws {
+        FixtureProtocol.pages = ["/novel/1.html": "<h1 class='book-title'>测试</h1>"]
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [FixtureProtocol.self]
+        let model = AppModel(service: NovelService(session: URLSession(configuration: config), requestInterval: 60))
+        model.link = "https://www.linovelib.com/novel/1.html"
+        model.startLookup()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.isLoading)
+        model.cancelLookup()
+        for _ in 0..<100 { if !model.isLoading { break }; try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.status, "已取消读取")
+        XCTAssertNil(model.failure)
+    }
     func service() -> NovelService {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]

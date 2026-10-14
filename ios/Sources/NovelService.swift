@@ -12,7 +12,8 @@ actor NovelService {
     init(session suppliedSession: URLSession? = nil, requestInterval: TimeInterval = 6) {
         self.requestInterval = requestInterval
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 25
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 25
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = suppliedSession ?? URLSession(configuration: config)
     }
@@ -32,6 +33,7 @@ actor NovelService {
         if delay > 0 { try await Task.sleep(for: .seconds(delay)) }
         lastRequest = Date()
         var request = URLRequest(url: url)
+        request.timeoutInterval = 15
         request.httpMethod = method; request.httpBody = body
         if body != nil { request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type") }
         request.setValue("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36", forHTTPHeaderField: "User-Agent")
@@ -45,7 +47,7 @@ actor NovelService {
             let response: URLResponse
             do { (bytes, response) = try await session.data(for: request) }
             catch is CancellationError { throw CancellationError() }
-            catch { if attempt < 2 { try await Task.sleep(for: .seconds(3)); continue }; throw error }
+            catch { try Task.checkCancellation(); if attempt < 2 { try await Task.sleep(for: .seconds(3)); continue }; throw error }
             guard let http = response as? HTTPURLResponse else { throw NovelError.message("无效的服务器响应。") }
             if http.statusCode == 429 || http.statusCode >= 500 {
                 if attempt < 2 { try await Task.sleep(for: .seconds(10 * (attempt + 1))); continue }
@@ -98,9 +100,9 @@ actor NovelService {
         throw NovelError.message("该站点未提供可用的书名搜索入口，请使用书籍编号查找或粘贴完整链接。")
     }
 
-    func load(_ input: String) async throws -> Novel {
+    func load(_ input: String, progress: (@Sendable (String) async -> Void)? = nil) async throws -> Novel {
         let original = try Self.supportedURL(input)
-        if original.host?.contains("wenku8.net") == true { return try await loadSource(original.absoluteString) }
+        if original.host?.contains("wenku8.net") == true { return try await loadSource(original.absoluteString, progress: progress) }
         guard let id = original.path.capture(#"/(?:novel|download)/(\d+)"#) else { throw NovelError.message("无法识别书籍编号。") }
         var components = URLComponents(url: original, resolvingAgainstBaseURL: false)!
         components.scheme = "https"
@@ -114,14 +116,17 @@ actor NovelService {
         var failures: [String] = []
         for candidate in candidates {
             try Task.checkCancellation()
-            do { return try await loadSource(candidate.absoluteString) }
+            do {
+                await progress?("正在连接：" + (candidate.host ?? "源站"))
+                return try await loadSource(candidate.absoluteString, progress: progress)
+            }
             catch is CancellationError { throw CancellationError() }
             catch { failures.append("\(candidate.host ?? "源站")：\(error.localizedDescription)") }
         }
         throw NovelError.message("所有来源读取失败：\n" + failures.joined(separator: "\n"))
     }
 
-    private func loadSource(_ input: String) async throws -> Novel {
+    private func loadSource(_ input: String, progress: (@Sendable (String) async -> Void)? = nil) async throws -> Novel {
         let original = try Self.supportedURL(input)
         let host = original.host!.lowercased()
         let wenku = host.contains("wenku8.net")
@@ -147,8 +152,9 @@ actor NovelService {
             guard let href = try doc.select("legend + div > a").first()?.attr("abs:href"), let link = URL(string: href) else { throw NovelError.message("找不到文库目录；需要登录的书籍暂不支持。") }
             catalogURL = link
         } else { catalogURL = URL(string: "\(biliHost)/novel/\(id)/catalog")! }
+        await progress?("读取目录…")
         let catalog = try await document(catalogURL)
-        let recovered = wenku ? (try Self.parseCatalog(catalog, wenku: true), 0) : try await recoverCatalog(catalog, base: catalogURL)
+        let recovered = wenku ? (try Self.parseCatalog(catalog, wenku: true), 0) : try await recoverCatalog(catalog, base: catalogURL, progress: progress)
         let chapters = recovered.0
         guard !chapters.isEmpty else { throw NovelError.message("目录为空或章节链接被隐藏，不能继续下载。") }
         let hiddenCount = recovered.1
@@ -208,7 +214,7 @@ actor NovelService {
     }
 
     // Preserve every catalog row, then recover missing addresses from adjacent chapter navigation.
-    func recoverCatalog(_ doc: Document, base: URL) async throws -> ([Chapter], Int) {
+    func recoverCatalog(_ doc: Document, base: URL, progress: (@Sendable (String) async -> Void)? = nil) async throws -> ([Chapter], Int) {
         var entries: [CatalogEntry] = []
         var volume = "正文"
         for item in try doc.select(".volume-chapters > li") {
@@ -240,6 +246,7 @@ actor NovelService {
             var changed = false
             for i in entries.indices where entries[i].url == nil {
                 try Task.checkCancellation()
+                await progress?("恢复隐藏章节：" + entries[i].title + "（大型目录可能需要数分钟，可取消）")
                 var found: URL?
                 do {
                     if i + 1 < entries.count, let next = entries[i+1].url {
