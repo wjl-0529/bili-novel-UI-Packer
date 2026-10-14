@@ -9,7 +9,7 @@ actor NovelService {
     private var warnings: [String] = []
     func takeWarnings() -> [String] { defer { warnings.removeAll() }; return warnings }
     private var restoreCache: [URL: ChapterRestore] = [:]
-    init(session suppliedSession: URLSession? = nil, requestInterval: TimeInterval = 6) {
+    init(session suppliedSession: URLSession? = nil, requestInterval: TimeInterval = 2) {
         self.requestInterval = requestInterval
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15

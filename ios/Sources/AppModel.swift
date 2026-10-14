@@ -10,6 +10,7 @@ import UIKit
     @Published var selected = Set<String>()
     @Published var books: [LibraryBook] = []
     @Published var isLoading = false
+    @Published var isLookupActive = false
     @Published var progress: Double = 0
     @Published var status = "粘贴小说详情页链接开始"
     @Published var shareURL: URL?
@@ -95,7 +96,7 @@ import UIKit
         guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { status = "请输入书名"; return }
         let query = searchText
         let reader = service
-        isLoading = true; status = "正在搜索（最多等待 30 秒）…"; defer { isLoading = false }
+        isLoading = true; isLookupActive = true; status = "正在搜索（最多等待 30 秒）…"; defer { isLoading = false; isLookupActive = false }
         do {
             searchResults = try await withThrowingTaskGroup(of: [URL].self) { group in
                 group.addTask { try await reader.search(query, source: source) }
@@ -110,7 +111,7 @@ import UIKit
 
     func load() async {
         guard !isLoading else { return }
-        failure = nil; isLoading = true; status = "读取书籍和目录…"; novel = nil; selected.removeAll(); defer { isLoading = false }
+        failure = nil; isLoading = true; isLookupActive = true; status = "读取书籍和目录…"; novel = nil; selected.removeAll(); defer { isLoading = false; isLookupActive = false }
         let input = link
         let reader = service
         do {

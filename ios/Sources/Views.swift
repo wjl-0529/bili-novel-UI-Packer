@@ -21,13 +21,6 @@ struct ImportView: View {
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    Image(systemName: "book.pages.fill").font(.system(size: 38)).foregroundStyle(.indigo).padding(.bottom, 6)
-                    Text("把喜欢的故事\n留在身边。").font(.largeTitle.bold())
-                    Text("导入小说，选择章节，收藏为 EPUB。").font(.subheadline).foregroundStyle(.secondary)
-                }.padding(.vertical, 18)
-            }.listRowBackground(Color.clear).listRowSeparator(.hidden)
-            Section {
                 Picker("导入方式", selection: $useID) {
                     Text("书籍编号").tag(true)
                     Text("完整链接").tag(false)
@@ -45,7 +38,7 @@ struct ImportView: View {
                     if useID, let url = source.bookURL(bookID) { model.link = url.absoluteString }
                     model.startLookup()
                 } label: {
-                    HStack { Label("查找书籍", systemImage: "magnifyingglass"); Spacer(); if model.isLoading { ProgressView() } }
+                    HStack { Label("查找书籍", systemImage: "magnifyingglass"); Spacer(); if model.isLookupActive { ProgressView() } }
                 }.disabled(model.isLoading || (useID ? source.bookURL(bookID) == nil : model.link.isEmpty)).accessibilityIdentifier("loadNovel")
             } header: { Text("导入书籍") } footer: { Text("编号对应所选站点：例如 1.html，只需输入 1。") }
             Section {
@@ -55,7 +48,7 @@ struct ImportView: View {
                     Button { model.link = url.absoluteString; model.startLookup() } label: { Label(url.lastPathComponent, systemImage: "book.closed") }
                 }
             } header: { Text("书名搜索") } footer: { Text("支持哔哩轻小说和轻小说文库。网站访问限制可能影响搜索与下载。") }
-            if model.isLoading && !model.isExporting {
+            if model.isLookupActive {
                 Section("查找进度") {
                     Text(model.status).font(.footnote).textSelection(.enabled)
                     Button("取消查找", role: .cancel) { model.cancelLookup() }
