@@ -5,6 +5,8 @@ import SwiftSoup
 actor NovelService {
     private let session: URLSession
     private var lastRequest = Date.distantPast
+    private var warnings: [String] = []
+    func takeWarnings() -> [String] { defer { warnings.removeAll() }; return warnings }
     private var restoreCache: [URL: ChapterRestore] = [:]
     init() {
         let config = URLSessionConfiguration.default
@@ -35,7 +37,11 @@ actor NovelService {
         } else { request.setValue("night=0", forHTTPHeaderField: "Cookie") }
         request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
         for attempt in 0..<3 {
-            let (bytes, response) = try await session.data(for: request)
+            let bytes: Data
+            let response: URLResponse
+            do { (bytes, response) = try await session.data(for: request) }
+            catch is CancellationError { throw CancellationError() }
+            catch { if attempt < 2 { try await Task.sleep(for: .seconds(3)); continue }; throw error }
             guard let http = response as? HTTPURLResponse else { throw NovelError.message("无效的服务器响应。") }
             if http.statusCode == 429 || http.statusCode >= 500 {
                 if attempt < 2 { try await Task.sleep(for: .seconds(10 * (attempt + 1))); continue }
@@ -103,7 +109,7 @@ actor NovelService {
             }
         }
         var summary = try doc.select("#bookSummary content").first()?.text() ?? ""
-        if wenku { summary = try doc.select("#content table").array().dropFirst(2).first()?.select("td").array().dropFirst().first()?.select("span").last()?.text() ?? "" }
+        if wenku { summary = try doc.select("#content table").array().dropFirst(2).first?.select("td").array().dropFirst().first?.select("span").last()?.text() ?? "" }
         let cover = try doc.select(wenku ? "#content table img" : ".book-layout img").first()?.attr("abs:src")
         let catalogURL: URL
         if wenku {
@@ -260,9 +266,9 @@ actor NovelService {
                     if let name = images[key] { try image.attr("src", "images/" + name); continue }
                     do { bytes = try await data(url, referer: current) }
                     catch is CancellationError { throw CancellationError() }
-                    catch { print("IMAGE_WARNING url=\(url) error=\(error.localizedDescription)"); try image.remove(); continue }
+                    catch { warnings.append("插图下载失败：" + url.absoluteString + " · " + error.localizedDescription); try image.remove(); continue }
                 }
-                guard let ext = Self.imageExtension(bytes) else { print("IMAGE_WARNING unsupported format"); try image.remove(); continue }
+                guard let ext = Self.imageExtension(bytes) else { warnings.append("插图格式不支持：" + String(key.prefix(120))); try image.remove(); continue }
                 let name = "image-\(images.count).\(ext)"
                 try bytes.write(to: folder.appendingPathComponent(name)); images[key] = name
                 try image.attr("src", "images/" + name)

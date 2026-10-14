@@ -79,8 +79,10 @@ import UIKit
     }
 
     func search() async {
+        guard !isLoading else { return }
+        failure = nil
         guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { status = "请输入书名"; return }
-        isLoading = true; defer { isLoading = false }; do { searchResults = try await service.search(searchText); status = searchResults.isEmpty ? "没有找到结果" : "找到 \(searchResults.count) 个结果" } catch { status = "搜索失败：\(error.localizedDescription)" }
+        isLoading = true; defer { isLoading = false }; do { searchResults = try await service.search(searchText); status = searchResults.isEmpty ? "没有找到结果" : "找到 \(searchResults.count) 个结果" } catch { status = "搜索失败：\(error.localizedDescription)"; failure = status }
     }
 
     func load() async {
@@ -110,6 +112,7 @@ import UIKit
             for (index, chapter) in chapters.enumerated() {
                 currentChapter = chapter.title; exportStatus = "正在下载：" + chapter.title; status = "正在下载 \(index + 1)/\(chapters.count)"
                 let body = try await service.chapter(chapter, folder: images, images: &imageMap, includeImages: includeImages)
+                for warning in await service.takeWarnings() { record(warning) }
                 exportBytes += body.utf8.count; exportImages = imageMap.count
                 record("已完成：" + chapter.title)
                 bodies.append(EPUBBuilder.page(title: chapter.title, body: body, addTitle: addChapterTitles)); completedChapters = index + 1; progress = Double(index + 1) / Double(chapters.count)
