@@ -18,6 +18,7 @@ import SwiftUI
     @Published var searchText = ""
     @Published var searchResults: [URL] = []
     @Published var activeTab = 0
+    @Published var exportStatus = ""
     @Published var exportTitle = ""
     @Published var exportSource = ""
     @Published var exportTotal = 0
@@ -31,12 +32,12 @@ import SwiftUI
     @Published var isExporting = false
     private var exportTask: Task<Void, Never>?
     func startExport(includeImages: Bool) {
-        guard !isLoading else { return }
+        guard !isLoading, exportTask == nil else { return }
         activeTab = 1
         exportTask = Task { await export(includeImages: includeImages) }
     }
     func cancelExport() { exportTask?.cancel() }
-    private func record(_ message: String) { exportEvents.append(ExportEvent(message: message)) }
+    private func record(_ message: String) { exportStatus = message; exportEvents.append(ExportEvent(message: message)) }
     private let service = NovelService()
     init() {
         let index = LibraryBook.directory.appendingPathComponent("library.json")
@@ -73,7 +74,7 @@ import SwiftUI
         do {
             var imageMap: [String: String] = [:]; var bodies: [String] = []
             for (index, chapter) in chapters.enumerated() {
-                currentChapter = chapter.title; status = "正在下载 \(index + 1)/\(chapters.count)"
+                currentChapter = chapter.title; exportStatus = "正在下载：" + chapter.title; status = "正在下载 \(index + 1)/\(chapters.count)"
                 let body = try await service.chapter(chapter, folder: images, images: &imageMap, includeImages: includeImages)
                 exportBytes += body.utf8.count; exportImages = imageMap.count
                 record("已完成：" + chapter.title)

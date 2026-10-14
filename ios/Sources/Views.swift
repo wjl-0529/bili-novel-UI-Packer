@@ -147,7 +147,7 @@ struct ExportProgressView: View {
                     Label(model.isExporting ? "正在打包" : model.shareURL != nil ? "EPUB 已就绪" : "打包已停止", systemImage: model.isExporting ? "shippingbox" : model.shareURL != nil ? "checkmark.circle.fill" : "pause.circle")
                         .font(.title2.bold()).foregroundStyle(.indigo).padding(.vertical, 8)
                     Text(model.exportTitle).font(.headline)
-                    Text(model.status).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(model.exportStatus).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
                     ProgressView(value: model.progress).tint(.indigo)
                 }
                 Section("任务详情") {
