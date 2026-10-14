@@ -19,6 +19,7 @@ struct Novel: Codable {
     var tags: [String] = []
     var alias: String? = nil
     var publicationStatus: String? = nil
+    var seriesTitle: String? = nil
     var volumeCovers: [String: URL] = [:]
 }
 

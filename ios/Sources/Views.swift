@@ -49,8 +49,8 @@ struct ImportView: View {
                 }.disabled(model.isLoading || (useID ? source.bookURL(bookID) == nil : model.link.isEmpty)).accessibilityIdentifier("loadNovel")
             } header: { Text("导入书籍") } footer: { Text("编号对应所选站点：例如 1.html，只需输入 1。") }
             Section {
-                TextField("输入小说名称", text: $model.searchText).submitLabel(.search).onSubmit { Task { await model.search() } }
-                Button("搜索") { Task { await model.search() } }.disabled(model.isLoading || model.searchText.isEmpty)
+                TextField("输入小说名称", text: $model.searchText).submitLabel(.search).onSubmit { Task { await model.search(source: source) } }
+                Button("搜索") { Task { await model.search(source: source) } }.disabled(model.isLoading || model.searchText.isEmpty)
                 ForEach(model.searchResults, id: \.self) { url in
                     Button { model.link = url.absoluteString; Task { await model.load(); showBook = model.novel != nil } } label: { Label(url.lastPathComponent, systemImage: "book.closed") }
                 }
@@ -65,6 +65,7 @@ struct ImportView: View {
                 Section("读取未完成") { Text(failure).font(.footnote).textSelection(.enabled).foregroundStyle(.red) }
             }
         }.navigationTitle("导入小说")
+        .onChange(of: model.novel?.url) { _, url in if url != nil { showBook = true } }
         .navigationDestination(isPresented: $showBook) { if let novel = model.novel { BookDetailView(model: model, novel: novel) } }
     }
 }

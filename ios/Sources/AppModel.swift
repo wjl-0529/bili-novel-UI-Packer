@@ -20,7 +20,7 @@ import UIKit
     @Published var searchResults: [URL] = []
     @Published var activeTab = 0
     @Published var outputURLs: [URL] = []
-    @Published var combineVolumes = true
+    @Published var combineVolumes = false
     @Published var addChapterTitles = false
     @Published var exportStatus = ""
     @Published var exportTitle = ""
@@ -66,7 +66,7 @@ import UIKit
             await load()
             guard novel != nil else { batchRemaining = []; return }
             if batchManual { activeTab = 0; return }
-            activeTab = 1
+            activeTab = 1; combineVolumes = false; addChapterTitles = false
             await export(includeImages: true)
             if failure != nil || Task.isCancelled { batchRemaining = []; return }
         }
@@ -79,11 +79,11 @@ import UIKit
         if let data = try? Data(contentsOf: index), let saved = try? JSONDecoder().decode([LibraryBook].self, from: data) { books = saved }
     }
 
-    func search() async {
+    func search(source: BookSource = .linovelib) async {
         guard !isLoading else { return }
         failure = nil
         guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else { status = "请输入书名"; return }
-        isLoading = true; defer { isLoading = false }; do { searchResults = try await service.search(searchText); status = searchResults.isEmpty ? "没有找到结果" : "找到 \(searchResults.count) 个结果" } catch { status = "搜索失败：\(error.localizedDescription)"; failure = status }
+        isLoading = true; defer { isLoading = false }; do { searchResults = try await service.search(searchText, source: source); status = searchResults.isEmpty ? "没有找到结果" : "找到 \(searchResults.count) 个结果" } catch { status = "搜索失败：\(error.localizedDescription)"; failure = status }
     }
 
     func load() async {
@@ -125,7 +125,7 @@ import UIKit
             for group in groups {
                 try Task.checkCancellation()
                 var book = novel
-                if !combineVolumes, let volume = group.first?.volume { book = Novel(title: novel.title + " " + volume, author: novel.author, summary: novel.summary, cover: novel.volumeCovers[volume] ?? novel.cover, url: novel.url, chapters: group, publisher: novel.publisher, tags: novel.tags) }
+                if !combineVolumes, let volume = group.first?.volume { book = Novel(title: novel.title + " " + volume, author: novel.author, summary: novel.summary, cover: novel.volumeCovers[volume] ?? novel.cover, url: novel.url, chapters: group, publisher: novel.publisher, tags: novel.tags, seriesTitle: novel.title) }
                 let package = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
                 defer { try? FileManager.default.removeItem(at: package) }
                 let target = package.appendingPathComponent("OEBPS/images")
@@ -134,7 +134,9 @@ import UIKit
                     guard let originalIndex = chapters.firstIndex(of: item) else { continue }
                     try Data(bodies[originalIndex].utf8).write(to: package.appendingPathComponent("OEBPS/chapter-\(index).xhtml"))
                 }
-                for name in imageMap.values { try FileManager.default.copyItem(at: images.appendingPathComponent(name), to: target.appendingPathComponent(name)) }
+                let groupMarkup = group.compactMap { item in chapters.firstIndex(of: item).map { bodies[$0] } }.joined()
+                let groupImages = imageMap.values.filter { groupMarkup.contains("images/" + $0) }
+                for name in groupImages { try FileManager.default.copyItem(at: images.appendingPathComponent(name), to: target.appendingPathComponent(name)) }
                 if let cover = book.cover {
                     do {
                         let bytes = try await service.data(cover, referer: book.url)
@@ -143,7 +145,7 @@ import UIKit
                     catch { record("封面下载失败：" + error.localizedDescription) }
                 }
                 if !(try FileManager.default.contentsOfDirectory(atPath: target.path)).contains(where: { $0.hasPrefix("cover.") }) {
-                    let names = imageMap.values.sorted()
+                    let names = groupImages.sorted()
                     let portrait = names.first { name in
                         guard let image = UIImage(contentsOfFile: target.appendingPathComponent(name).path) else { return false }
                         return image.size.width < image.size.height

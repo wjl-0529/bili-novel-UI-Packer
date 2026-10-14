@@ -61,12 +61,32 @@ actor NovelService {
         return try SwiftSoup.parse(html, url.absoluteString)
     }
 
-    func search(_ query: String) async throws -> [URL] {
-        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let candidates = [URL(string: "https://www.bilinovel.com/search.html?keyword=\(q)"), URL(string: "https://www.linovelib.com/search.html?keyword=\(q)")].compactMap { $0 }
-        var results: [URL] = []
-        for url in candidates { let doc = try await document(url); for link in try doc.select("a[href*=novel], a[href*=book]") { if let absolute = URL(string: try link.attr("abs:href")), !results.contains(absolute) { results.append(absolute) } }; if !results.isEmpty { return Array(results.prefix(20)) } }
-        return results
+    func search(_ query: String, source: BookSource = .linovelib) async throws -> [URL] {
+        if let book = source.bookURL(query) { return [book] }
+        guard let sample = source.bookURL("1"), let host = sample.host,
+              let home = URL(string: "https://" + host + "/") else { throw NovelError.message("无效的站点。") }
+        let doc = try await document(home)
+        for form in try doc.select("form") {
+            guard let input = try form.select("input[name=searchkey], input[name=keyword], input[name=q]").first() else { continue }
+            let raw = try form.attr("action")
+            guard let action = URL(string: raw, relativeTo: home)?.absoluteURL, action.host == host else { continue }
+            var components = URLComponents(url: action, resolvingAgainstBaseURL: false)!
+            let field = try input.attr("name")
+            var items = components.queryItems ?? []
+            for hidden in try form.select("input[type=hidden][name]") { items.append(URLQueryItem(name: try hidden.attr("name"), value: try hidden.attr("value"))) }
+            items.append(URLQueryItem(name: field, value: query))
+            components.queryItems = items
+            guard let target = components.url else { continue }
+            let result = try await document(target)
+            var matches: [URL] = []
+            for link in try result.select("a[href]") {
+                guard let url = URL(string: try link.attr("abs:href")), url.host == host,
+                      url.path.range(of: #"^/(novel/\d+\.html|book/\d+\.htm)$"#, options: .regularExpression) != nil else { continue }
+                if !matches.contains(url) { matches.append(url) }
+            }
+            return Array(matches.prefix(50))
+        }
+        throw NovelError.message("该站点未提供可用的书名搜索入口，请使用书籍编号查找或粘贴完整链接。")
     }
 
     func load(_ input: String) async throws -> Novel {
