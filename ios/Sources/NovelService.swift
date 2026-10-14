@@ -148,8 +148,18 @@ actor NovelService {
         novel.unresolvedChapters = try catalog.select(".volume-chapters > li.jsChapter a").map { try $0.text() }.filter { !knownTitles.contains($0) }
         novel.publisher = try doc.select(".tag-small.orange").first()?.text()
         novel.tags = try doc.select(".book-cell .book-meta span em").map { try $0.text() }
+        if wenku {
+            if let details = try doc.select("#content table").array().dropFirst(2).first?.select("td").array().dropFirst().first,
+               let tagText = try details.select("span").first()?.text() {
+                novel.tags = tagText.replacingOccurrences(of: "作品Tags：", with: "").split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            }
+            for td in try doc.select("#content table td") {
+                let text = try td.text()
+                if text.hasPrefix("文章状态：") { novel.publicationStatus = text.replacingOccurrences(of: "文章状态：", with: "") }
+            }
+        }
         novel.alias = try doc.select(".backupname .bkname-body.gray").first()?.text()
-        novel.publicationStatus = try doc.select(".book-cell .book-meta+.book-meta").first()?.text()
+        if !wenku { novel.publicationStatus = try doc.select(".book-cell .book-meta+.book-meta").first()?.text() }
         var currentVolume = "正文"
         for item in try catalog.select(".volume-chapters > li") {
             if item.hasClass("chapter-bar") { currentVolume = try item.text() }
