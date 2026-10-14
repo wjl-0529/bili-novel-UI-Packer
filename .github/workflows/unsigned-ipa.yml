@@ -16,7 +16,10 @@ jobs:
       - name: Generate Xcode project
         run: brew install xcodegen && xcodegen generate
       - name: Test
-        run: TEST_RUNNER_LIVE_SOURCE_TEST=1 xcodebuild test -scheme BiliNovel -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO
+        run: TEST_RUNNER_LIVE_SOURCE_TEST=1 xcodebuild test -scheme BiliNovel -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -resultBundlePath Acceptance.xcresult CODE_SIGNING_ALLOWED=NO
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: native-acceptance-evidence, path: ios/Acceptance.xcresult }
       - name: Archive unsigned
         run: xcodebuild archive -project BiliNovel.xcodeproj -scheme BiliNovel -sdk iphoneos -configuration Release -archivePath build/BiliNovel.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
       - name: Package IPA

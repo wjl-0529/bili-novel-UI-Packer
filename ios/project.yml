@@ -43,11 +43,21 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.bilinovel.native.tests
+  BiliNovelUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: BiliNovel
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.bilinovel.native.uitests
 schemes:
   BiliNovel:
     build:
       targets:
         BiliNovel: all
     test:
-      targets: [BiliNovelTests]
+      targets: [BiliNovelTests, BiliNovelUITests]
 
