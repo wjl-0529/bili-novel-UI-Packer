@@ -26,6 +26,24 @@ final class ParityTests: XCTestCase {
     func page(_ title: String, previous: String, next: String, nextLabel: String = "下一章", body: String = "正文") -> String {
         "<h1 id='atitle'>\(title)</h1><script>var ReadParams={url_previous:'\(previous)',url_next:'\(next)'}</script><div id='acontent'><p>\(body)</p></div><div id='footlink'><a class='prevlink'>上一章</a><a class='nextlink'>\(nextLabel)</a></div>"
     }
+    func testWenkuMetadataAndChapterParagraphs() async throws {
+        FixtureProtocol.pages = [
+            "/book/1.htm": "<div id='content'><table><tr><td><span><b>文库测试</b></span></td></tr><tr><td>小说作者：作者</td><td>文章状态：完结</td></tr></table><table></table><table><tr><td></td><td><span>作品Tags：校园 奇幻</span><span>简介</span></td></tr></table><legend>目录</legend><div><a href='/novel/0/1/index.htm'>目录</a></div></div>",
+            "/novel/0/1/index.htm": "<table><tr><td class='vcss'>第一卷</td><td class='ccss'><a href='1.htm'>第一章</a></td></tr></table>",
+            "/novel/0/1/1.htm": "<div id='content'>第一段<br/>第二段<br/><div id='contentdp'>广告</div></div>"]
+        let service = service()
+        let novel = try await service.load("https://www.wenku8.net/book/1.htm")
+        XCTAssertEqual(novel.title, "文库测试"); XCTAssertEqual(novel.author, "作者")
+        XCTAssertEqual(novel.summary, "简介"); XCTAssertEqual(novel.tags, ["校园", "奇幻"])
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var images: [String:String] = [:]
+        let html = try await service.chapter(XCTUnwrap(novel.chapters.first), folder: root, images: &images, includeImages: false)
+        let doc = try SwiftSoup.parse(html)
+        XCTAssertEqual(try doc.select("p").count, 2)
+        XCTAssertFalse(try doc.text().contains("广告"))
+    }
     func testRecoversConsecutiveHiddenLinksInCatalogOrder() async throws {
         FixtureProtocol.pages = [
             "/novel/1/4.html": page("四", previous: "/novel/1/3.html", next: "/novel/1/catalog"),
