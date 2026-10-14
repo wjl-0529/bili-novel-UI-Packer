@@ -26,6 +26,22 @@ final class ParityTests: XCTestCase {
     func page(_ title: String, previous: String, next: String, nextLabel: String = "下一章", body: String = "正文") -> String {
         "<h1 id='atitle'>\(title)</h1><script>var ReadParams={url_previous:'\(previous)',url_next:'\(next)'}</script><div id='acontent'><p>\(body)</p></div><div id='footlink'><a class='prevlink'>上一章</a><a class='nextlink'>\(nextLabel)</a></div>"
     }
+    @MainActor func testContinuousBatchExportsTwoBooks() async throws {
+        let catalog = "<ul class='volume-chapters'><li class='chapter-bar'>第一卷</li><li class='jsChapter'><a href='/novel/1/1.html'>一</a></li></ul>"
+        let detail = "<h1 class='book-title'>批量测试</h1><div class='book-rand-a'><span>作者</span></div>"
+        FixtureProtocol.pages = ["/novel/1.html": detail, "/novel/2.html": detail, "/novel/1/catalog": catalog, "/novel/2/catalog": catalog, "/novel/1/1.html": page("一", previous: "/novel/1/catalog", next: "/novel/1/catalog")]
+        let model = AppModel(service: service())
+        let before = model.books.count
+        model.batchInput = "https://www.linovelib.com/novel/1.html https://www.linovelib.com/novel/2.html"
+        model.startBatch()
+        for _ in 0..<100 {
+            if model.books.count >= before + 2 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNil(model.failure)
+        XCTAssertEqual(model.books.count, before + 2)
+        XCTAssertTrue(model.batchRemaining.isEmpty)
+    }
     func testWenkuMetadataAndChapterParagraphs() async throws {
         FixtureProtocol.pages = [
             "/book/1.htm": "<div id='content'><table><tr><td><span><b>文库测试</b></span></td></tr><tr><td>小说作者：作者</td><td>文章状态：完结</td></tr></table><table></table><table><tr><td></td><td><span>作品Tags：校园 奇幻</span><span>简介</span></td></tr></table><legend>目录</legend><div><a href='/novel/0/1/index.htm'>目录</a></div></div>",
