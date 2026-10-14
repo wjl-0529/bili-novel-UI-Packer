@@ -33,7 +33,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          cp build/BiliNovel-unsigned.ipa build/BiliNovel-1.4.2-unsigned.ipa
-          gh release view ios-v1.4.2 --repo "$GH_REPO" || gh release create ios-v1.4.2 --repo "$GH_REPO" --target "$GITHUB_SHA" --title "iOS 1.4.2 · 目录统计与全分卷核对" --notes "原项目 0.2.49 功能对照：分卷/合并、批量连续/手动、标题、封面、元数据与目录；新增编号导入、独立任务页、日志。已精确核对 1 号书全部 38 个分卷，444 个正文 URL 与恢复目录一致；原站标注 482=444 正文项+38 分卷标题，5428 27 章及全书正文。Wenku8 在线受 HTTP 403 限制；真实书名搜索仍受源站限制；iOS26模拟器通过，iOS27未实测。无签名 IPA 需要自行签名安装。"
-          gh release upload ios-v1.4.2 build/BiliNovel-1.4.2-unsigned.ipa --repo "$GH_REPO" --clobber
+          cp build/BiliNovel-unsigned.ipa build/BiliNovel-1.4.3-unsigned.ipa
+          gh release view ios-v1.4.3 --repo "$GH_REPO" || gh release create ios-v1.4.3 --repo "$GH_REPO" --target "$GITHUB_SHA" --title "iOS 1.4.3 · 查找速度与任务状态修复" --notes "原项目 0.2.49 功能对照：分卷/合并、批量连续/手动、标题、封面、元数据与目录；新增编号导入、独立任务页、日志。已精确核对 1 号书全部 38 个分卷，444 个正文 URL 与恢复目录一致；原站标注 482=444 正文项+38 分卷标题，5428 27 章及全书正文。Wenku8 在线受 HTTP 403 限制；真实书名搜索仍受源站限制；iOS26模拟器通过，iOS27未实测。无签名 IPA 需要自行签名安装。"
+          gh release upload ios-v1.4.3 build/BiliNovel-1.4.3-unsigned.ipa --repo "$GH_REPO" --clobber
 
