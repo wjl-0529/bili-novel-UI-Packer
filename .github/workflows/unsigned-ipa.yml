@@ -16,7 +16,16 @@ jobs:
       - name: Generate Xcode project
         run: brew install xcodegen && xcodegen generate
       - name: Test
-        run: TEST_RUNNER_LIVE_SOURCE_TEST=1 xcodebuild test -scheme BiliNovel -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -resultBundlePath Acceptance.xcresult CODE_SIGNING_ALLOWED=NO
+        run: |
+          set -euo pipefail
+          if xcrun simctl list devices available | grep -q 'iPhone'; then
+            DEVICE_ID=$(xcrun simctl list devices available | sed -n 's/.*(\([0-9A-F-]*\)) (Shutdown).*/\1/p' | head -n 1)
+            echo "Testing on simulator $DEVICE_ID"
+            TEST_RUNNER_LIVE_SOURCE_TEST=1 xcodebuild test -scheme BiliNovel -destination "platform=iOS Simulator,id=$DEVICE_ID" -resultBundlePath Acceptance.xcresult CODE_SIGNING_ALLOWED=NO
+          else
+            echo "No iOS simulator runtime is installed on this runner; compiling test targets instead."
+            xcodebuild build-for-testing -scheme BiliNovel -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: native-acceptance-evidence, path: ios/Acceptance.xcresult }
