@@ -9,7 +9,7 @@ actor NovelService {
     private var warnings: [String] = []
     func takeWarnings() -> [String] { defer { warnings.removeAll() }; return warnings }
     private var restoreCache: [URL: ChapterRestore] = [:]
-    init(session suppliedSession: URLSession? = nil, requestInterval: TimeInterval = 2) {
+    init(session suppliedSession: URLSession? = nil, requestInterval: TimeInterval = 0.5) {
         self.requestInterval = requestInterval
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
@@ -254,6 +254,34 @@ actor NovelService {
             guard let url = URL(string: href, relativeTo: current)?.absoluteURL,
                   url.host == base.host, url.path.hasPrefix(base.path.replacingOccurrences(of: "catalog", with: "")), url.path.hasSuffix(".html") else { return nil }
             return (url, ["上一页", "上一頁", "下一页", "下一頁"].contains(label))
+        }
+        // The catalog page hides some links, but each volume page exposes the complete
+        // chapter list. Resolve missing rows from those pages before probing chapters.
+        var volumeURLs: [URL] = []
+        for item in try doc.select(".volume-chapters > li.chapter-bar") {
+            if let href = try item.select("a[href]").first()?.attr("abs:href"),
+               let url = URL(string: href), url.host == base.host, url.path.contains("/vol_") {
+                if !volumeURLs.contains(url) { volumeURLs.append(url) }
+            }
+        }
+        for volumeURL in volumeURLs {
+            if entries.allSatisfy({ $0.url != nil }) { break }
+            try Task.checkCancellation()
+            let missingTitles = Set(entries.filter { $0.url == nil }.map { $0.title })
+            guard !missingTitles.isEmpty else { break }
+            await progress?("从分卷目录恢复隐藏章节…")
+            do {
+                let volumeDoc = try await page(volumeURL)
+                for link in try volumeDoc.select("a[href]") {
+                    let title = try link.text()
+                    let rawHref = try link.attr("abs:href")
+                    guard missingTitles.contains(title), !rawHref.isEmpty,
+                          let url = URL(string: rawHref), url.host == base.host, url.path.hasSuffix(".html"),
+                          let index = entries.firstIndex(where: { $0.url == nil && $0.title == title }) else { continue }
+                    entries[index].url = url
+                }
+            } catch is CancellationError { throw CancellationError() }
+            catch { continue }
         }
         // Repeat to support runs of consecutive hidden links, without guessing numeric chapter IDs.
         for _ in 0..<entries.count {
